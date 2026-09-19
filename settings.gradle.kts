@@ -20,7 +20,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "meshhop-app"
+rootProject.name = "meshpigeon-android"
 
 include(":core-protocol")
 include(":core-domain")

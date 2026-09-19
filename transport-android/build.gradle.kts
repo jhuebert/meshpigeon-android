@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "app.meshhop.transport.android"
+    namespace = "app.meshpigeon.transport.android"
     compileSdk = 36
 
     defaultConfig { minSdk = 26 }

@@ -24,8 +24,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          repository: jhuebert/meshhop-firmware
-          path: ../meshhop-firmware
+          repository: jhuebert/meshpigeon-firmware
+          path: ../meshpigeon-firmware
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -37,11 +37,11 @@ jobs:
       - name: Build + start the firmware simulator
         run: |
           pip install platformio
-          (cd ../meshhop-firmware && pio run -e sim)
-          (cd ../meshhop-firmware && ./.pio/build/sim/program --port 8765 &) 
+          (cd ../meshpigeon-firmware && pio run -e sim)
+          (cd ../meshpigeon-firmware && ./.pio/build/sim/program --port 8765 &) 
           sleep 2
       - name: Drive the real simulator through the app transport
-        run: ./gradlew :core-transport:test -Dmeshhop.sim.port=8765 --tests "*TransportSimInteropTest*"
+        run: ./gradlew :core-transport:test -Dmeshpigeon.sim.port=8765 --tests "*TransportSimInteropTest*"
 
   android:
     name: assemble + lint (debug)
@@ -58,7 +58,7 @@ jobs:
       - run: ./gradlew lint
       - uses: actions/upload-artifact@v4
         with:
-          name: meshhop-debug-apk
+          name: meshpigeon-debug-apk
           path: app/build/outputs/apk/debug/*.apk
 
   nightly-ui:

@@ -1,4 +1,4 @@
-# Contributing to MeshHop App
+# Contributing to MeshPigeon App
 
 Thanks for helping make mesh messaging approachable!
 

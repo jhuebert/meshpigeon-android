@@ -1,11 +1,11 @@
-# Getting started with MeshHop
+# Getting started with MeshPigeon
 
 *Welcome! This guide assumes you have never heard of mesh radio.*
 
 ## What you need
 
-- The MeshHop app (Android) — installed from the Play Store.
-- A MeshHop radio plugged into power (see [radios.md](radios.md)), or one
+- The MeshPigeon app (Android) — installed from the Play Store.
+- A MeshPigeon radio plugged into power (see [radios.md](radios.md)), or one
   you can plug into your phone.
 
 ## 1. Install and open the app

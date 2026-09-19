@@ -17,7 +17,7 @@ density.
 
 ## Identity export & backup
 
-- **Export identity**: an encrypted `.meshhop-identity` file (passphrase —
+- **Export identity**: an encrypted `.meshpigeon-identity` file (passphrase —
   use a real one) containing your keys and name. Restores on a new phone.
 - **Export full backup**: identity + contacts + channels + history.
 - **Cloud backup** (off by default): encrypted blobs to your own Google

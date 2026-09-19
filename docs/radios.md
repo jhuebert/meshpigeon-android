@@ -1,6 +1,6 @@
 # Radios
 
-MeshHop works with a dumb, durable radio. The app holds all the
+MeshPigeon works with a dumb, durable radio. The app holds all the
 intelligence; the radio just receives, remembers, and transmits on demand.
 
 ## Supported boards (v1)

@@ -15,7 +15,7 @@ name. Anyone who knows the name can join — great for topics, not private.
 
 ## Sharing
 
-Every channel has a **Share** action: QR code or a `meshhop.app/c/…` link.
+Every channel has a **Share** action: QR code or a `meshpigeon.app/c/…` link.
 Pasting a key is forgiving — spaces and dashes are stripped automatically.
 You always see a preview ("Join channel **Trail Talk**?") before joining.
 

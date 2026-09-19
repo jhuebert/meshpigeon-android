@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "app.meshhop.feature.messaging"
+    namespace = "app.meshpigeon.feature.messaging"
     compileSdk = 36
 
     defaultConfig { minSdk = 26 }

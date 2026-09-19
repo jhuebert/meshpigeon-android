@@ -1,9 +1,9 @@
-# MeshHop App
+# MeshPigeon App
 
-**Message anywhere. No towers, no internet.** MeshHop is a native Android
+**Message anywhere. No towers, no internet.** MeshPigeon is a native Android
 messaging app for mesh radio: install, connect a radio, start messaging. All
 protocol, identity, storage, and UX intelligence lives here — the radio
-([meshhop-firmware](https://github.com/jhuebert/meshhop-firmware)) is a dumb,
+([meshpigeon-firmware](https://github.com/jhuebert/meshpigeon-firmware)) is a dumb,
 durable packet store.
 
 ```
@@ -24,7 +24,7 @@ durable packet store.
 └───────────────────────────┬──────────────────────────────┘
                             ▼  raw frames (BLE / USB / TCP)
               ┌──────────────────────────────┐
-              │ MeshHop radio (dumb, durable)│
+              │ MeshPigeon radio (dumb, durable)│
               └──────────────────────────────┘
                             ▼ on-air, MeshCore-compatible
 ```
@@ -63,10 +63,10 @@ testable (a small deviation from plan 02 with the contracts unchanged).
 Run the app against the **desktop radio simulator** (no hardware needed):
 
 ```sh
-# in a sibling checkout of meshhop-firmware:
+# in a sibling checkout of meshpigeon-firmware:
 pio run -e sim && .pio/build/sim/program --port 8765
 # then the opt-in integration test:
-./gradlew :core-transport:test -Dmeshhop.sim.port=8765 \
+./gradlew :core-transport:test -Dmeshpigeon.sim.port=8765 \
   --tests "*TransportSimInteropTest*"
 ```
 

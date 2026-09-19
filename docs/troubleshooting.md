@@ -16,7 +16,7 @@ and ✓✓ means the recipient confirmed. If you see ✓ for a while:
 - USB: use a data cable (not charge-only), and accept the Android
   permission prompt.
 - Bluetooth: make sure the radio is powered and within range; the app
-  scans for MeshHop radios only.
+  scans for MeshPigeon radios only.
 - The radio was just powered on: it needs a few seconds to boot and start
   advertising.
 
@@ -35,4 +35,4 @@ the same one. It has nothing to do with your phone's language or locale.
 
 Messages travel over slow radio air. The composer counts characters for the
 current channel; over the budget, split your message — or send a photo the
-normal internet way when you're back online (MeshHop is off-grid first).
+normal internet way when you're back online (MeshPigeon is off-grid first).

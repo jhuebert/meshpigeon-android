@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "app.meshhop.ui"
+    namespace = "app.meshpigeon.ui"
     compileSdk = 36
 
     defaultConfig { minSdk = 26 }

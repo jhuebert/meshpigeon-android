@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "app.meshhop.feature.contacts"
+    namespace = "app.meshpigeon.feature.contacts"
     compileSdk = 36
 
     defaultConfig { minSdk = 26 }

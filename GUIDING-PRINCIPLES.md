@@ -1,6 +1,6 @@
-# MeshHop App — Guiding Principles
+# MeshPigeon App — Guiding Principles
 
-> **MeshHop exists so a stranger to mesh radio can install, connect, and
+> **MeshPigeon exists so a stranger to mesh radio can install, connect, and
 > message in minutes — offline, forever.**
 >
 > 1. Protocol in the app, never the firmware. Firmware stays dumb and durable.
@@ -21,7 +21,7 @@ Concrete consequences, enforced in review:
   Android SDK; their tests run everywhere (this is what keeps them ≥ 90 %
   covered).
 - All on-air protocol, crypto, retry policy, and path logic live in the app.
-  The radio (`meshhop-firmware`) holds raw packets and persisted settings —
+  The radio (`meshpigeon-firmware`) holds raw packets and persisted settings —
   nothing else.
 - Keys never leave the app: identity private keys are sealed at rest and
   never sent to a radio.

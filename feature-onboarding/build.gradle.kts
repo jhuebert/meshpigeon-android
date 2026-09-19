@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "app.meshhop.feature.onboarding"
+    namespace = "app.meshpigeon.feature.onboarding"
     compileSdk = 36
 
     defaultConfig { minSdk = 26 }

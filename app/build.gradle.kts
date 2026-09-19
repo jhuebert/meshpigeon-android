@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "app.meshhop.android"
+    namespace = "app.meshpigeon.android"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "app.meshhop.android"
+        applicationId = "app.meshpigeon.android"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

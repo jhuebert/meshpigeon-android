@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "app.meshhop.data"
+    namespace = "app.meshpigeon.data"
     compileSdk = 36
 
     defaultConfig {
