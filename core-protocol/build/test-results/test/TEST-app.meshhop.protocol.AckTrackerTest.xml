@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.meshhop.protocol.AckTrackerTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-09-19T21:11:24.144Z" hostname="titan" time="0.041">
+  <properties/>
+  <testcase name="late ack within grace window still confirms" classname="app.meshhop.protocol.AckTrackerTest" time="0.025"/>
+  <testcase name="late ack outside grace window stays failed" classname="app.meshhop.protocol.AckTrackerTest" time="0.001"/>
+  <testcase name="retry uses exponential backoff then fails after max retries" classname="app.meshhop.protocol.AckTrackerTest" time="0.001"/>
+  <testcase name="ack after failed-then-confirmed is suppressed" classname="app.meshhop.protocol.AckTrackerTest" time="0.001"/>
+  <testcase name="unknown ack is ignored" classname="app.meshhop.protocol.AckTrackerTest" time="0.001"/>
+  <testcase name="duplicate ack does not double-confirm" classname="app.meshhop.protocol.AckTrackerTest" time="0.001"/>
+  <testcase name="text budget fits MeshCore payload limits" classname="app.meshhop.protocol.AckTrackerTest" time="0.0"/>
+  <testcase name="timeout estimate is physics based" classname="app.meshhop.protocol.AckTrackerTest" time="0.001"/>
+  <testcase name="ack confirms tracked message" classname="app.meshhop.protocol.AckTrackerTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

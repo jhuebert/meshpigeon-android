@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.meshhop.protocol.CryptoTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-09-19T21:11:24.203Z" hostname="titan" time="0.389">
+  <properties/>
+  <testcase name="RFC 7748 section 6_1 key agreement with clamped Ed25519-style scalar" classname="app.meshhop.protocol.CryptoTest" time="0.24"/>
+  <testcase name="expected ACK matches MeshCore formula" classname="app.meshhop.protocol.CryptoTest" time="0.029"/>
+  <testcase name="advert round trip with location and name" classname="app.meshhop.protocol.CryptoTest" time="0.015"/>
+  <testcase name="group message round trip" classname="app.meshhop.protocol.CryptoTest" time="0.039"/>
+  <testcase name="shared secret is symmetric and clamped" classname="app.meshhop.protocol.CryptoTest" time="0.027"/>
+  <testcase name="shared secret matches MeshCore orlp library with fixed seeds" classname="app.meshhop.protocol.CryptoTest" time="0.009"/>
+  <testcase name="RFC 7748 X25519 section 5_2 vector 1" classname="app.meshhop.protocol.CryptoTest" time="0.002"/>
+  <testcase name="advert sign and verify" classname="app.meshhop.protocol.CryptoTest" time="0.006"/>
+  <testcase name="direct message round trip between two identities" classname="app.meshhop.protocol.CryptoTest" time="0.007"/>
+  <testcase name="encryptThenMac round trip and tamper detection" classname="app.meshhop.protocol.CryptoTest" time="0.001"/>
+  <testcase name="channel mac key zero-pads 16-byte secrets to 32" classname="app.meshhop.protocol.CryptoTest" time="0.0"/>
+  <testcase name="group data reaction round trip" classname="app.meshhop.protocol.CryptoTest" time="0.004"/>
+  <testcase name="ed25519 to montgomery conversion matches birational map" classname="app.meshhop.protocol.CryptoTest" time="0.003"/>
+  <testcase name="channel keys are meshcore compatible" classname="app.meshhop.protocol.CryptoTest" time="0.0"/>
+  <system-out><![CDATA[seedA=5e0d005bc5520533b468d74a2a08697c9dfd2abad702d34867052ba22ea335a6
+pubA=1487139d8a88f951af9eb031f97f64888b94c63dc4589744665349b370e50199
+seedB=b1bea309b0061206aa775807776ade516a580187a058358b7b224fbceaab198b
+pubB=28bbe5874f35a6ea8fece6e67f8f2e631917a5454a27e7962eea64c287b077d8
+s1=df3e271bfa75545b47199563a6deb77c3de3cd100625c257e131a2680b4a7c5a
+s2=df3e271bfa75545b47199563a6deb77c3de3cd100625c257e131a2680b4a7c5a
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
