@@ -30,7 +30,9 @@ class RadioSession(
         val uptimeMs: Long,
         val bootCount: Long,
         val storeCount: Long,
-        val storeCapacity: Long,
+        /** Store byte budget (GET_INFO @31). Entries are variable-length, so
+         *  packet capacity depends on packet sizes. */
+        val storeCapacityBytes: Long,
         val storeDropped: Long,
         val oldestSeq: Long,
         val configEpoch: Long,
@@ -160,7 +162,7 @@ class RadioSession(
             uptimeMs = p.leU32(19),
             bootCount = p.leU32(23),
             storeCount = p.leU32(27),
-            storeCapacity = p.leU32(31),
+            storeCapacityBytes = p.leU32(31),
             storeDropped = p.leU32(35),
             oldestSeq = p.leU32(39),
             configEpoch = p.leU32(43),

@@ -109,7 +109,7 @@ class FakeRadioAdapter : RadioAdapter {
         uptimeMs.leU32Into(p, 19)
         bootCount.leU32Into(p, 23)
         store.size.toLong().leU32Into(p, 27)
-        2000L.leU32Into(p, 31)
+        65536L.leU32Into(p, 31)  // store byte budget (matches board default)
         0L.leU32Into(p, 35)
         (store.firstOrNull()?.seq ?: nextSeq).leU32Into(p, 39)
         settings.configEpoch.leU32Into(p, 43)
