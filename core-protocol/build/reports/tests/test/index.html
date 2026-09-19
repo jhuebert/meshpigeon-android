@@ -3,33 +3,15 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
 <meta http-equiv="x-ua-compatible" content="IE=edge"/>
-<title>Test results - All Results</title>
+<title>Test results - Test Summary</title>
 <link href="css/base-style.css" rel="stylesheet" type="text/css"/>
 <link href="css/style.css" rel="stylesheet" type="text/css"/>
 <script src="js/report.js" type="text/javascript"></script>
 </head>
 <body>
 <div id="content">
-<h1>All Results</h1>
-<div class="tab-container">
-<ul class="tabLinks">
-<li>
-<a class="successGroup" href="#">Gradle Test Run :core-protocol:test</a>
-</li>
-</ul>
-<div class="tab">
-<h2>Gradle Test Run :core-protocol:test</h2>
-<h1>Gradle Test Run :core-protocol:test</h1>
-<div class="tab-container">
-<ul class="tabLinks">
-<li>
-<a class="" href="#">summary</a>
-</li>
-</ul>
-<div class="tab">
-<h2>summary</h2>
-<div>
-<div class="summary">
+<h1>Test Summary</h1>
+<div id="summary">
 <table>
 <tr>
 <td>
@@ -37,26 +19,26 @@
 <table>
 <tr>
 <td>
-<div class="infoBox">
+<div class="infoBox" id="tests">
 <div class="counter">39</div>
 <p>tests</p>
 </div>
 </td>
 <td>
-<div class="infoBox">
+<div class="infoBox" id="failures">
 <div class="counter">0</div>
 <p>failures</p>
 </div>
 </td>
 <td>
-<div class="infoBox">
+<div class="infoBox" id="ignored">
 <div class="counter">0</div>
-<p>skipped</p>
+<p>ignored</p>
 </div>
 </td>
 <td>
-<div class="infoBox duration">
-<div class="counter">1.067s</div>
+<div class="infoBox" id="duration">
+<div class="counter">0.571s</div>
 <p>duration</p>
 </div>
 </td>
@@ -65,7 +47,7 @@
 </div>
 </td>
 <td>
-<div class="infoBox success successRate">
+<div class="infoBox success" id="successRate">
 <div class="percent">100%</div>
 <p>successful</p>
 </div>
@@ -73,79 +55,108 @@
 </tr>
 </table>
 </div>
-<table class="test-results sortable">
+<div class="tab-container">
+<ul class="tabLinks">
+<li>
+<a href="#">Packages</a>
+</li>
+<li>
+<a href="#">Classes</a>
+</li>
+</ul>
+<div class="tab">
+<h2>Packages</h2>
+<table>
 <thead>
 <tr>
-<th>Child</th>
-<th>Name</th>
-<th data-sort-default="desc">Tests</th>
-<th data-sort-default="desc">Failures</th>
-<th data-sort-default="desc">Skipped</th>
-<th data-sort-default="desc">Duration</th>
+<th>Package</th>
+<th>Tests</th>
+<th>Failures</th>
+<th>Ignored</th>
+<th>Duration</th>
 <th>Success rate</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td class="success">
-<a href="app.meshhop.protocol.AckTrackerTest/index.html">AckTrackerTest</a>
+<a href="packages/app.meshhop.protocol.html">app.meshhop.protocol</a>
 </td>
-<td class="path">app.meshhop.protocol.AckTrackerTest</td>
-<td>9</td>
+<td>39</td>
 <td>0</td>
 <td>0</td>
-<td data-sort-value="41">0.041s</td>
-<td class="success" data-sort-value="100">100%</td>
-</tr>
-<tr>
-<td class="success">
-<a href="app.meshhop.protocol.ClockMapperTest/index.html">ClockMapperTest</a>
-</td>
-<td class="path">app.meshhop.protocol.ClockMapperTest</td>
-<td>4</td>
-<td>0</td>
-<td>0</td>
-<td data-sort-value="7">0.007s</td>
-<td class="success" data-sort-value="100">100%</td>
-</tr>
-<tr>
-<td class="success">
-<a href="app.meshhop.protocol.CryptoTest/index.html">CryptoTest</a>
-</td>
-<td class="path">app.meshhop.protocol.CryptoTest</td>
-<td>14</td>
-<td>0</td>
-<td>0</td>
-<td data-sort-value="389">0.389s</td>
-<td class="success" data-sort-value="100">100%</td>
-</tr>
-<tr>
-<td class="success">
-<a href="app.meshhop.protocol.PacketCodecTest/index.html">PacketCodecTest</a>
-</td>
-<td class="path">app.meshhop.protocol.PacketCodecTest</td>
-<td>10</td>
-<td>0</td>
-<td>0</td>
-<td data-sort-value="7">0.007s</td>
-<td class="success" data-sort-value="100">100%</td>
-</tr>
-<tr>
-<td class="success">
-<a href="app.meshhop.protocol.PathCacheTest/index.html">PathCacheTest</a>
-</td>
-<td class="path">app.meshhop.protocol.PathCacheTest</td>
-<td>2</td>
-<td>0</td>
-<td>0</td>
-<td data-sort-value="3">0.003s</td>
-<td class="success" data-sort-value="100">100%</td>
+<td>0.571s</td>
+<td class="success">100%</td>
 </tr>
 </tbody>
 </table>
 </div>
-</div>
-</div>
+<div class="tab">
+<h2>Classes</h2>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Tests</th>
+<th>Failures</th>
+<th>Ignored</th>
+<th>Duration</th>
+<th>Success rate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="success">
+<a href="classes/app.meshhop.protocol.AckTrackerTest.html">app.meshhop.protocol.AckTrackerTest</a>
+</td>
+<td>9</td>
+<td>0</td>
+<td>0</td>
+<td>0.050s</td>
+<td class="success">100%</td>
+</tr>
+<tr>
+<td class="success">
+<a href="classes/app.meshhop.protocol.ClockMapperTest.html">app.meshhop.protocol.ClockMapperTest</a>
+</td>
+<td>4</td>
+<td>0</td>
+<td>0</td>
+<td>0.009s</td>
+<td class="success">100%</td>
+</tr>
+<tr>
+<td class="success">
+<a href="classes/app.meshhop.protocol.CryptoTest.html">app.meshhop.protocol.CryptoTest</a>
+</td>
+<td>14</td>
+<td>0</td>
+<td>0</td>
+<td>0.506s</td>
+<td class="success">100%</td>
+</tr>
+<tr>
+<td class="success">
+<a href="classes/app.meshhop.protocol.PacketCodecTest.html">app.meshhop.protocol.PacketCodecTest</a>
+</td>
+<td>10</td>
+<td>0</td>
+<td>0</td>
+<td>0.004s</td>
+<td class="success">100%</td>
+</tr>
+<tr>
+<td class="success">
+<a href="classes/app.meshhop.protocol.PathCacheTest.html">app.meshhop.protocol.PathCacheTest</a>
+</td>
+<td>2</td>
+<td>0</td>
+<td>0</td>
+<td>0.002s</td>
+<td class="success">100%</td>
+</tr>
+</tbody>
+</table>
 </div>
 </div>
 <div id="footer">
@@ -155,7 +166,7 @@
 <input id="line-wrapping-toggle" type="checkbox" autocomplete="off"/>
 </label>
 </div>Generated by 
-<a href="https://www.gradle.org">Gradle 9.7.1</a> at Sep 19, 2026, 4:11:24 PM</p>
+<a href="https://www.gradle.org">Gradle 8.14.5</a> at Sep 19, 2026, 4:32:07 PM</p>
 </div>
 </div>
 </body>

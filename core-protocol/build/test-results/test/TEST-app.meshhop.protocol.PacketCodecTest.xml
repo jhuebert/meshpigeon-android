@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="app.meshhop.protocol.PacketCodecTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-09-19T21:11:24.597Z" hostname="titan" time="0.007">
+<testsuite name="app.meshhop.protocol.PacketCodecTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-09-19T21:32:07.225Z" hostname="titan" time="0.005">
   <properties/>
-  <testcase name="golden - 0x8A = 10 hops with 3-byte hashes" classname="app.meshhop.protocol.PacketCodecTest" time="0.002"/>
-  <testcase name="txt msg payload round trip" classname="app.meshhop.protocol.PacketCodecTest" time="0.001"/>
+  <testcase name="golden - 0x8A = 10 hops with 3-byte hashes" classname="app.meshhop.protocol.PacketCodecTest" time="0.0"/>
+  <testcase name="txt msg payload round trip" classname="app.meshhop.protocol.PacketCodecTest" time="0.0"/>
   <testcase name="round trip - transport codes preserved on decode" classname="app.meshhop.protocol.PacketCodecTest" time="0.001"/>
   <testcase name="header bit packing matches MeshCore layout" classname="app.meshhop.protocol.PacketCodecTest" time="0.0"/>
   <testcase name="flood route with full 63-hop path at 1-byte hashes" classname="app.meshhop.protocol.PacketCodecTest" time="0.001"/>
-  <testcase name="round trip - flood TXT_MSG with no path" classname="app.meshhop.protocol.PacketCodecTest" time="0.001"/>
-  <testcase name="corrupt packets are dropped, never crash" classname="app.meshhop.protocol.PacketCodecTest" time="0.0"/>
+  <testcase name="round trip - flood TXT_MSG with no path" classname="app.meshhop.protocol.PacketCodecTest" time="0.0"/>
+  <testcase name="corrupt packets are dropped, never crash" classname="app.meshhop.protocol.PacketCodecTest" time="0.001"/>
   <testcase name="packet tag is stable across decode-encode cycles" classname="app.meshhop.protocol.PacketCodecTest" time="0.001"/>
   <testcase name="round trip - direct with 3-byte hashes" classname="app.meshhop.protocol.PacketCodecTest" time="0.0"/>
   <testcase name="golden - path_length byte encodes hash size and hops, not byte count" classname="app.meshhop.protocol.PacketCodecTest" time="0.0"/>

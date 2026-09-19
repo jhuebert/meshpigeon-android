@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.meshhop.transport.TransportFrameCodecTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-19T21:32:07.098Z" hostname="titan" time="0.006">
+  <properties/>
+  <testcase name="cobs round trip incl zeros" classname="app.meshhop.transport.TransportFrameCodecTest" time="0.002"/>
+  <testcase name="garbage before frame self-heals" classname="app.meshhop.transport.TransportFrameCodecTest" time="0.001"/>
+  <testcase name="crc16 ccitt-false reference values" classname="app.meshhop.transport.TransportFrameCodecTest" time="0.001"/>
+  <testcase name="frame stream reassembles fragmented chunks" classname="app.meshhop.transport.TransportFrameCodecTest" time="0.0"/>
+  <testcase name="matches firmware encoder output for PING" classname="app.meshhop.transport.TransportFrameCodecTest" time="0.0"/>
+  <testcase name="wire round trip" classname="app.meshhop.transport.TransportFrameCodecTest" time="0.001"/>
+  <testcase name="bad crc dropped" classname="app.meshhop.transport.TransportFrameCodecTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

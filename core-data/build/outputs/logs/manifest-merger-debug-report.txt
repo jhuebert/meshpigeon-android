@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml:2:13-83
+INJECTED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml:2:13-83
+	package
+		INJECTED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml
+	xmlns:android
+		ADDED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml:2:23-81
+uses-sdk
+INJECTED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml reason: use-sdk injection requested
+INJECTED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml
+INJECTED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml
+	android:targetSdkVersion
+		INJECTED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml
+	android:minSdkVersion
+		INJECTED from /home/jason/dev/meshcore/meshhop-app/core-data/build/intermediates/tmp/ProcessLibraryManifest/debug/tempAndroidManifest6194748369933541578.xml

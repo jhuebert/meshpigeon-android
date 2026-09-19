@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.13.2" type="incidents">
+
+    <incident
+        id="ModifierParameter"
+        severity="warning"
+        message="Modifier parameter should be the first optional parameter">
+        <location
+            file="${:ui-core*debug*MAIN*sourceProvider*0*javaDir*2}/app/meshhop/ui/Avatar.kt"
+            line="28"
+            column="67"
+            startOffset="1031"
+            endLine="28"
+            endColumn="75"
+            endOffset="1039"/>
+    </incident>
+
+    <incident
+        id="ModifierParameter"
+        severity="warning"
+        message="Modifier parameter should be the first optional parameter">
+        <location
+            file="${:ui-core*debug*MAIN*sourceProvider*0*javaDir*2}/app/meshhop/ui/Components.kt"
+            line="43"
+            column="5"
+            startOffset="1197"
+            endLine="43"
+            endColumn="13"
+            endOffset="1205"/>
+    </incident>
+
+</incidents>

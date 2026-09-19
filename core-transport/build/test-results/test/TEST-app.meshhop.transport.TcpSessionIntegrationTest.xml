@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.meshhop.transport.TcpSessionIntegrationTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-19T21:32:07.007Z" hostname="titan" time="0.085">
+  <properties/>
+  <testcase name="ping, info and send round trip over tcp" classname="app.meshhop.transport.TcpSessionIntegrationTest" time="0.085"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

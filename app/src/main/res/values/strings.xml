@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- All user-facing strings live here from day one (06 §7): additional
+     languages are a translation task, not a refactor. -->
+<resources>
+    <color name="ic_launcher_background">#2E7D5B</color>
+    <string name="app_name">MeshHop</string>
+</resources>

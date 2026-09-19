@@ -1,0 +1,4 @@
+#Sat Sep 19 16:31:55 CDT 2026
+base.0=/home/jason/dev/meshcore/meshhop-app/app/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
+path.0=classes.dex
+renamed.0=classes.dex
