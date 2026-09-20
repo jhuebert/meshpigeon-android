@@ -122,12 +122,12 @@ class AckTrackerTest {
 
     @Test
     fun `text budget fits MeshCore payload limits`() {
-        // plaintext ceiling is 176 bytes (AES-framed within the 184-byte
-        // payload); plaintext = ts(4) + meta(1) + [text+NUL] for DMs
-        assertEquals(170, AckTracker.textBudget(isGroup = false))
-        // group: "name: " prefix rides inside the same plaintext
-        assertEquals(170, AckTracker.textBudget(isGroup = true))
-        assertEquals(165, AckTracker.textBudget(isGroup = true, senderPrefixLen = 5))
+        // MeshCore composes at MAX_TEXT_LEN = 10*CIPHER_BLOCK_SIZE = 160 bytes
+        // (BaseChatMesh); plaintext still AES-framed within the 184-byte payload
+        assertEquals(160, AckTracker.textBudget(isGroup = false))
+        // group: "name: " prefix rides inside the same 160-byte cap
+        assertEquals(160, AckTracker.textBudget(isGroup = true))
+        assertEquals(155, AckTracker.textBudget(isGroup = true, senderPrefixLen = 5))
         // budget never negative
         assertEquals(0, AckTracker.textBudget(isGroup = true, senderPrefixLen = 999))
     }

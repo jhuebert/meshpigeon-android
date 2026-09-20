@@ -183,11 +183,15 @@ class AckTracker(
          * + text(+NUL). Group messages carry a "name: " prefix inside the
          * same plaintext. (The routing path lives in the packet header, not
          * the payload, so it doesn't affect the text budget.)
+         *
+         * COMPOSE cap matches MeshCore exactly: MAX_TEXT_LEN =
+         * 10*CIPHER_BLOCK_SIZE = 160 bytes of text, shared with the
+         * "name: " prefix for group messages (BaseChatMesh::sendGroupMessage).
+         * MeshCore clients can DISPLAY up to 184-byte frames, but nothing
+         * they run can ever COMPOSE more — so MeshPigeon must not either.
          */
         fun textBudget(isGroup: Boolean, senderPrefixLen: Int = 0): Int {
-            val plainCeiling = 176 // 184 − 2 MAC − AES block rounding
-            val overhead = 5 + 1 // timestamp + flags + the NUL terminator
-            return (plainCeiling - overhead - senderPrefixLen).coerceAtLeast(0)
+            return (160 - senderPrefixLen).coerceAtLeast(0)
         }
     }
 }
