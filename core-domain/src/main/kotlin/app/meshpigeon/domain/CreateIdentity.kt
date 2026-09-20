@@ -23,8 +23,8 @@ class CreateIdentity(
                 id = 0,
                 name = name.ifBlank { "Pigeon" },
                 publicKey = pair.publicKey,
-                // keystore sealing lands with the M2 security pass; the
-                // column is already named _enc to keep the schema stable
+                // sealed at the repository boundary (Android Keystore, M2
+                // security pass); the column keeps its _enc name for schema stability
                 privateKeyEnc = pair.privateKey,
                 flags = 0,
                 createdAt = now,

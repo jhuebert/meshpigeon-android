@@ -3,6 +3,7 @@ package app.meshpigeon.android
 import android.app.Application
 import android.content.Context
 import androidx.room.Room
+import app.meshpigeon.data.KeystoreSecretSealer
 import app.meshpigeon.data.MeshPigeonDatabase
 import app.meshpigeon.data.RoomChannelRepository
 import app.meshpigeon.data.RoomContactRepository
@@ -57,9 +58,10 @@ class AppGraph(private val context: Context) {
         .fallbackToDestructiveMigration(dropAllTables = false)
         .build()
 
-    val identities = RoomIdentityRepository(db)
+    val secretSealer = KeystoreSecretSealer(context)
+    val identities = RoomIdentityRepository(db, secretSealer)
     val contacts = RoomContactRepository(db)
-    val channels = RoomChannelRepository(db)
+    val channels = RoomChannelRepository(db, secretSealer)
     val conversations = RoomConversationRepository(db)
     val messages = RoomMessageRepository(db)
     val outbox = RoomOutboxRepository(db)

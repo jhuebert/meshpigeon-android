@@ -31,6 +31,7 @@ import app.meshpigeon.domain.OutboxRepository
 import app.meshpigeon.domain.RadioLinkKind
 import app.meshpigeon.domain.RadioTarget
 import app.meshpigeon.domain.RadioTargetRepository
+import app.meshpigeon.domain.SecretSealer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -356,13 +357,13 @@ abstract class MeshPigeonDatabase : RoomDatabase() {
 
 // ---- mappers ----------------------------------------------------------------
 
-internal fun IdentityRow.toDomain() = Identity(
-    id, name, pubkey, privkey_enc, flags, created_at, is_active,
+internal fun IdentityRow.toDomain(sealer: SecretSealer) = Identity(
+    id, name, pubkey, sealer.unseal(privkey_enc), flags, created_at, is_active,
     AdvertPolicy.valueOf(advert_policy), last_advert_at,
 )
 
-internal fun Identity.toRow() = IdentityRow(
-    id, name, publicKey, privateKeyEnc, flags, createdAt, isActive,
+internal fun Identity.toRow(sealer: SecretSealer) = IdentityRow(
+    id, name, publicKey, sealer.seal(privateKeyEnc), flags, createdAt, isActive,
     advertPolicy.name, lastAdvertAt,
 )
 
@@ -377,13 +378,13 @@ internal fun Contact.toRow() = ContactRow(
     source.name, blockedAt, flags, note, lastLatitude, lastLongitude, isRepeater, accepted,
 )
 
-internal fun ChannelRow.toDomain() = Channel(
-    id, identity_id, name, key_enc, ChannelKind.valueOf(kind), created_at,
+internal fun ChannelRow.toDomain(sealer: SecretSealer) = Channel(
+    id, identity_id, name, sealer.unseal(key_enc), ChannelKind.valueOf(kind), created_at,
     pinned, muted, NotifyMode.valueOf(notify_mode),
 )
 
-internal fun Channel.toRow() = ChannelRow(
-    id, identityId, name, keyEnc, kind.name, createdAt, pinned, muted, notifyMode.name,
+internal fun Channel.toRow(sealer: SecretSealer) = ChannelRow(
+    id, identityId, name, sealer.seal(keyEnc), kind.name, createdAt, pinned, muted, notifyMode.name,
 )
 
 internal fun ConversationRow.toDomain() = Conversation(
@@ -430,10 +431,10 @@ internal fun RadioTarget.toRow() = RadioTargetRow(
 
 // ---- repositories ------------------------------------------------------------
 
-class RoomIdentityRepository(private val db: MeshPigeonDatabase) : IdentityRepository {
-    override fun active(): Flow<Identity?> = db.identityDao().observeActive().map { it?.toDomain() }
-    override fun all(): Flow<List<Identity>> = db.identityDao().observeAll().map { l -> l.map { it.toDomain() } }
-    override suspend fun upsert(identity: Identity): Long = db.identityDao().upsert(identity.toRow())
+class RoomIdentityRepository(private val db: MeshPigeonDatabase, private val sealer: SecretSealer) : IdentityRepository {
+    override fun active(): Flow<Identity?> = db.identityDao().observeActive().map { it?.toDomain(sealer) }
+    override fun all(): Flow<List<Identity>> = db.identityDao().observeAll().map { l -> l.map { it.toDomain(sealer) } }
+    override suspend fun upsert(identity: Identity): Long = db.identityDao().upsert(identity.toRow(sealer))
     override suspend fun setActive(id: Long) = db.identityDao().setActive(id)
     override suspend fun delete(id: Long) = db.identityDao().delete(id)
 }
@@ -462,12 +463,12 @@ class RoomContactRepository(private val db: MeshPigeonDatabase) : ContactReposit
     override suspend fun clearPending(identityId: Long) = db.contactDao().clearPending(identityId)
 }
 
-class RoomChannelRepository(private val db: MeshPigeonDatabase) : ChannelRepository {
+class RoomChannelRepository(private val db: MeshPigeonDatabase, private val sealer: SecretSealer) : ChannelRepository {
     override fun observe(identityId: Long): Flow<List<Channel>> =
-        db.channelDao().observe(identityId).map { l -> l.map { it.toDomain() } }
+        db.channelDao().observe(identityId).map { l -> l.map { it.toDomain(sealer) } }
 
-    override suspend fun byId(id: Long): Channel? = db.channelDao().byId(id)?.toDomain()
-    override suspend fun upsert(channel: Channel): Long = db.channelDao().upsert(channel.toRow())
+    override suspend fun byId(id: Long): Channel? = db.channelDao().byId(id)?.toDomain(sealer)
+    override suspend fun upsert(channel: Channel): Long = db.channelDao().upsert(channel.toRow(sealer))
     override suspend fun delete(id: Long) = db.channelDao().delete(id)
 }
 
