@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,15 +44,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import app.meshpigeon.domain.Channel
 import app.meshpigeon.domain.ChannelRepository
 import app.meshpigeon.domain.ContactRepository
+import app.meshpigeon.domain.ContactSource
 import app.meshpigeon.domain.ConversationKind
 import app.meshpigeon.domain.ConversationRepository
+import app.meshpigeon.domain.CreateChannel
 import app.meshpigeon.domain.IdentityRepository
 import app.meshpigeon.domain.MessageRepository
 import app.meshpigeon.domain.SendMessage
 import app.meshpigeon.protocol.AckTracker
 import app.meshpigeon.protocol.DeliveryState
+import app.meshpigeon.protocol.ShareCards
+import app.meshpigeon.protocol.ShareCodec
 import app.meshpigeon.ui.MeshPigeonSpacing
 import app.meshpigeon.ui.deliveryGlyph
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -60,6 +66,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -70,11 +77,12 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ConversationViewModel(
-    identities: IdentityRepository,
+    private val identities: IdentityRepository,
     private val conversations: ConversationRepository,
     messages: MessageRepository,
     private val contacts: ContactRepository,
     channels: ChannelRepository,
+    private val createChannel: CreateChannel,
     private val sendMessage: SendMessage,
     conversationId: Long,
 ) : ViewModel() {
@@ -83,10 +91,16 @@ class ConversationViewModel(
         val messages: List<app.meshpigeon.domain.Message> = emptyList(),
         val isDirect: Boolean = true,
         val isRequest: Boolean = false,
+        /** Channels that can be dropped into this chat (07 §4), excluding the one being viewed. */
+        val shareableChannels: List<Channel> = emptyList(),
     )
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
+
+    /** One-line feedback for card save/join actions (07 §4). */
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice
 
     // latest rows resolved from the flows (send path uses them)
     private var conversation: app.meshpigeon.domain.Conversation? = null
@@ -119,6 +133,8 @@ class ConversationViewModel(
                             messages = msgs,
                             isDirect = conv.kind == ConversationKind.DM,
                             isRequest = conv.isRequest,
+                            // can't share a channel into its own conversation
+                            shareableChannels = channelList.filter { it.id != conv.refId },
                         )
                     }
                 }
@@ -128,18 +144,20 @@ class ConversationViewModel(
 
     /** Composer → SendMessage (queue) → outbox; the service flushes. */
     fun send(text: String) {
-        viewModelScope.launch {
-            val conv = conversation ?: return@launch
-            when (conv.kind) {
-                ConversationKind.DM -> peer?.let {
-                    // replying to a request accepts the sender (07 §5)
-                    if (conv.isRequest) acceptRequest()
-                    sendMessage.queueDirect(it.publicKey, text)
-                }
-                ConversationKind.GROUP, ConversationKind.PUBLIC ->
-                    channel?.let { sendMessage.queueGroup(it, text) }
-                ConversationKind.TRACE_LOG -> Unit
+        viewModelScope.launch { sendText(text) }
+    }
+
+    private suspend fun sendText(text: String) {
+        val conv = conversation ?: return
+        when (conv.kind) {
+            ConversationKind.DM -> peer?.let {
+                // replying to a request accepts the sender (07 §5)
+                if (conv.isRequest) acceptRequest()
+                sendMessage.queueDirect(it.publicKey, text)
             }
+            ConversationKind.GROUP, ConversationKind.PUBLIC ->
+                channel?.let { sendMessage.queueGroup(it, text) }
+            ConversationKind.TRACE_LOG -> Unit
         }
     }
 
@@ -176,6 +194,82 @@ class ConversationViewModel(
     fun retry(messageId: Long) {
         viewModelScope.launch { sendMessage.requeue(messageId) }
     }
+
+    /** Plus-menu: drop my contact card into this chat (07 §4). */
+    fun shareMyCard() {
+        viewModelScope.launch {
+            val identity = identities.active().first() ?: return@launch
+            val conv = conversation ?: return@launch
+            val isGroup = conv.kind != ConversationKind.DM
+            val prefix = if (isGroup) "${identity.name}: " else ""
+            val text = ShareCards.contactCard(
+                identity.name,
+                identity.publicKey,
+                AckTracker.textBudget(isGroup = isGroup, senderPrefixLen = prefix.length),
+            ) ?: run {
+                _notice.value = "Name too long for one hop"
+                return@launch
+            }
+            sendText(text)
+        }
+    }
+
+    /** Plus-menu: drop a channel-join card into this chat (07 §4). */
+    fun shareChannel(channel: Channel) {
+        viewModelScope.launch {
+            val identity = identities.active().first() ?: return@launch
+            val conv = conversation ?: return@launch
+            val isGroup = conv.kind != ConversationKind.DM
+            val prefix = if (isGroup) "${identity.name}: " else ""
+            val text = ShareCards.channelCard(
+                channel.name,
+                channel.keyEnc,
+                AckTracker.textBudget(isGroup = isGroup, senderPrefixLen = prefix.length),
+            ) ?: run {
+                _notice.value = "Channel name too long for one hop"
+                return@launch
+            }
+            sendText(text)
+        }
+    }
+
+    /** One-tap save on a received card (07 §4): add the contact or join the channel. */
+    fun saveCard(message: app.meshpigeon.domain.Message) {
+        viewModelScope.launch {
+            val identity = identities.active().first() ?: return@launch
+            when (val card = ShareCards.detect(message.body)) {
+                is ShareCodec.Decoded.Contact -> {
+                    val name = card.name.ifBlank { "Contact" }
+                    val existing = contacts.byPublicKey(identity.id, card.publicKey)
+                    if (existing != null) {
+                        _notice.value = "${existing.name} is already in your contacts"
+                    } else {
+                        contacts.upsert(
+                            app.meshpigeon.domain.Contact(
+                                id = 0,
+                                identityId = identity.id,
+                                publicKey = card.publicKey,
+                                name = name,
+                                firstSeenAt = System.currentTimeMillis(),
+                                source = ContactSource.LINK,
+                                isRepeater = card.meshCoreType == 2,
+                            ),
+                        )
+                        _notice.value = "Added $name"
+                    }
+                }
+                is ShareCodec.Decoded.Channel -> {
+                    createChannel.join(identity.id, card.name, card.secret)
+                    _notice.value = "Joined ${card.name}"
+                }
+                null -> Unit
+            }
+        }
+    }
+
+    fun clearNotice() {
+        _notice.value = null
+    }
 }
 
 /**
@@ -190,10 +284,13 @@ fun ConversationScreen(
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val notice by viewModel.notice.collectAsStateWithLifecycle()
     val title = state.title
     val messages = state.messages
     var draft by remember { mutableStateOf("") }
     var longPressed by remember { mutableStateOf<Long?>(null) }
+    var plusOpen by remember { mutableStateOf(false) }
+    var shareChannelOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     val budget = AckTracker.textBudget(isGroup = false)
@@ -247,6 +344,18 @@ fun ConversationScreen(
                         modifier = Modifier.padding(horizontal = MeshPigeonSpacing.md),
                     )
                 }
+                if (notice != null) {
+                    Text(
+                        notice!!,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = MeshPigeonSpacing.md),
+                    )
+                    LaunchedEffect(notice) {
+                        kotlinx.coroutines.delay(4_000)
+                        viewModel.clearNotice()
+                    }
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -254,6 +363,34 @@ fun ConversationScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.sm),
                 ) {
+                    Box {
+                        IconButton(
+                            onClick = { plusOpen = true },
+                            enabled = !state.isRequest,
+                            modifier = Modifier.semantics { contentDescription = "Attach" },
+                        ) {
+                            Icon(Icons.Filled.AddCircle, contentDescription = null)
+                        }
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = plusOpen,
+                            onDismissRequest = { plusOpen = false },
+                        ) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("Attach my contact card") },
+                                onClick = {
+                                    plusOpen = false
+                                    viewModel.shareMyCard()
+                                },
+                            )
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("Share channel…") },
+                                onClick = {
+                                    plusOpen = false
+                                    shareChannelOpen = true
+                                },
+                            )
+                        }
+                    }
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { draft = it },
@@ -326,6 +463,7 @@ fun ConversationScreen(
                         canReact = !state.isDirect,
                         onReact = viewModel::react,
                         onRetry = { viewModel.retry(message.id) },
+                        onSaveCard = viewModel::saveCard,
                     )
                 }
                 // reactions whose target never arrived still surface (07 §4)
@@ -340,6 +478,44 @@ fun ConversationScreen(
             }
         }
     }
+
+    if (shareChannelOpen) {
+        ShareChannelDialog(
+            channels = state.shareableChannels,
+            onShare = {
+                shareChannelOpen = false
+                viewModel.shareChannel(it)
+            },
+            onDismiss = { shareChannelOpen = false },
+        )
+    }
+}
+
+/** Plus-menu "Share channel…" (07 §4): pick a channel to drop as a card. */
+@Composable
+private fun ShareChannelDialog(
+    channels: List<Channel>,
+    onShare: (Channel) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Share channel") },
+        text = {
+            if (channels.isEmpty()) {
+                Text("No other channels to share yet.")
+            } else {
+                Column {
+                    channels.forEach { channel ->
+                        TextButton(onClick = { onShare(channel) }) {
+                            Text(channel.name)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** Accept/block banner on a message-request conversation (07 §5). */
@@ -376,10 +552,13 @@ fun MessageBubble(
     canReact: Boolean = false,
     onReact: (app.meshpigeon.domain.Message, String) -> Unit = { _, _ -> },
     onRetry: (Long) -> Unit = {},
+    onSaveCard: (app.meshpigeon.domain.Message) -> Unit = {},
 ) {
     val mine = message.out
     var actionsOpen by remember { mutableStateOf(false) }
     var emojiOpen by remember { mutableStateOf(false) }
+    var cardSaved by remember { mutableStateOf(false) }
+    val card = remember(message.id, message.body) { ShareCards.detect(message.body) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -439,12 +618,44 @@ fun MessageBubble(
         ) {
             if (!mine && message.senderName != null) {
                 Text(
-                    message.senderName!!,
+                    message.senderName!!, 
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
-            Text(message.body, style = MaterialTheme.typography.bodyLarge)
+            if (card != null) {
+                // rich card (07 §4): the link stays in the body for peers,
+                // we just render it as a tappable card
+                val cardTitle = when (card) {
+                    is ShareCodec.Decoded.Contact -> card.name.ifBlank { "Contact" }
+                    is ShareCodec.Decoded.Channel -> card.name.ifBlank { "Channel" }
+                }
+                Text(
+                    when (card) {
+                        is ShareCodec.Decoded.Contact -> "📇 $cardTitle"
+                        is ShareCodec.Decoded.Channel -> "📻 $cardTitle"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    if (card is ShareCodec.Decoded.Contact) "Contact card" else "Channel",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!mine && !cardSaved) {
+                    Button(
+                        onClick = {
+                            cardSaved = true
+                            onSaveCard(message)
+                        },
+                        modifier = Modifier.padding(top = MeshPigeonSpacing.xs),
+                    ) {
+                        Text(if (card is ShareCodec.Decoded.Contact) "Add contact" else "Join channel")
+                    }
+                }
+            } else {
+                Text(message.body, style = MaterialTheme.typography.bodyLarge)
+            }
             Text(
                 text = subInfo(message),
                 style = MaterialTheme.typography.labelSmall,

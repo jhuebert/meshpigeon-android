@@ -264,7 +264,8 @@ fun MeshPigeonApp(graph: AppGraph) {
                         initializer {
                             ConversationViewModel(
                                 graph.identities, graph.conversations, graph.messages,
-                                graph.contacts, graph.channels, graph.sendMessage, conversationId,
+                                graph.contacts, graph.channels, graph.createChannel,
+                                graph.sendMessage, conversationId,
                             )
                         }
                     },
