@@ -58,6 +58,10 @@ class FlushOutbox(
                         entry.ackKey, conversationId,
                         entry.airtimeMs, entry.hops, entry.direct,
                     )
+                } else {
+                    // no ACKs (group/reactions): fire once, never retransmitted
+                    // (03 §6) — drop the row so it cannot be claimed again
+                    outbox.remove(entry.id)
                 }
                 messages.updateState(entry.messageId, DeliveryState.SENT)
                 tx.add(Transmission(entry, isRetry = false))

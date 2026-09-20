@@ -73,6 +73,7 @@ class SendMessage(
                     state = DeliveryState.QUEUED,
                     sentAt = wallClockMs(),
                     ackKey = flood.expectedAck,
+                    packetTag = PacketCodec.packetTag(built),
                 ),
             )
             retryOf
@@ -88,6 +89,8 @@ class SendMessage(
                     state = DeliveryState.QUEUED,
                     replyToId = replyToId,
                     ackKey = flood.expectedAck,
+                    // peers target reactions at the tag of what they heard
+                    packetTag = PacketCodec.packetTag(built),
                 ),
             )
         }
@@ -133,7 +136,11 @@ class SendMessage(
         )
         val msgId = if (retryOf != null) {
             messages.update(
-                (messages.byId(retryOf) ?: return 0).copy(state = DeliveryState.QUEUED, sentAt = wallClockMs()),
+                (messages.byId(retryOf) ?: return 0).copy(
+                    state = DeliveryState.QUEUED,
+                    sentAt = wallClockMs(),
+                    packetTag = PacketCodec.packetTag(raw),
+                ),
             )
             retryOf
         } else {
@@ -146,6 +153,7 @@ class SendMessage(
                     sentAt = wallClockMs(),
                     out = true,
                     state = DeliveryState.QUEUED,
+                    packetTag = PacketCodec.packetTag(raw),
                 ),
             )
         }
@@ -156,6 +164,51 @@ class SendMessage(
                 messageId = msgId,
                 packet = raw,
                 ackKey = null, // group messages have no ACKs
+                attempts = 0,
+                nextRetryAt = 0,
+                state = DeliveryState.QUEUED,
+                airtimeMs = airtimeEstimator.estimate(raw.size),
+                hops = 0,
+                direct = false,
+            ),
+        )
+        return msgId
+    }
+
+    /**
+     * Queue a targeted reaction (GRP_DATA, 03 §6): fire-once, no ACKs, no
+     * retry schedule — best-effort by design. Reacting to a DM is not
+     * supported (reactions ride channel GRP_DATA only).
+     */
+    suspend fun queueReaction(channel: Channel, conversationId: Long, target: Message, emoji: String): Long {
+        val identity = identities.active().first() ?: error("no active identity")
+        val targetTag = target.packetTag ?: error("target message has no packet tag")
+        val raw = Messages.buildReaction(
+            Channels.Channel(channel.name, channel.keyEnc),
+            targetTag,
+            identity.name,
+            emoji,
+        )
+        val msgId = messages.insert(
+            Message(
+                id = 0,
+                conversationId = conversationId,
+                identityId = identity.id,
+                body = emoji,
+                kind = MessageKind.REACTION,
+                sentAt = wallClockMs(),
+                out = true,
+                state = DeliveryState.QUEUED,
+                replyToId = target.id,
+            ),
+        )
+        outbox.enqueue(
+            OutboxEntry(
+                id = 0,
+                conversationId = conversationId,
+                messageId = msgId,
+                packet = raw,
+                ackKey = null,
                 attempts = 0,
                 nextRetryAt = 0,
                 state = DeliveryState.QUEUED,

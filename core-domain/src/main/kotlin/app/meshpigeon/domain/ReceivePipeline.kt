@@ -16,6 +16,7 @@ import app.meshpigeon.protocol.MeshCrypto
 import app.meshpigeon.protocol.PacketCodec
 import app.meshpigeon.protocol.PacketSpec
 import app.meshpigeon.protocol.RawPacket
+import app.meshpigeon.protocol.ReactionData
 import app.meshpigeon.protocol.TxtMsgPayload
 import kotlinx.coroutines.flow.first
 
@@ -76,7 +77,7 @@ class ReceivePipeline(
         when (packet.payloadType) {
             PacketSpec.PAYLOAD_TXT_MSG -> onDirectTxt(identity, packet, rssi, snr, hops, recvAt)
             PacketSpec.PAYLOAD_GRP_TXT -> onGroupTxt(identity, packet, rssi, snr, hops, recvAt)
-            PacketSpec.PAYLOAD_GRP_DATA -> onGroupData(identity, packet)
+            PacketSpec.PAYLOAD_GRP_DATA -> onGroupData(identity, packet, recvAt)
             PacketSpec.PAYLOAD_ACK -> onAck(identity, packet)
             PacketSpec.PAYLOAD_ADVERT -> onAdvert(identity, packet, recvAt)
             else -> Unit // REQ/RESPONSE/PATH/TRACE land with later milestones
@@ -200,7 +201,7 @@ class ReceivePipeline(
         }
     }
 
-    private suspend fun onGroupData(identity: Identity, packet: RawPacket) {
+    private suspend fun onGroupData(identity: Identity, packet: RawPacket, recvAt: Long) {
         val channelHash = packet.payload.getOrNull(0)?.toInt()?.and(0xFF) ?: return
         val channel = channels.observe(identity.id).first()
             .firstOrNull { Channels.channelHash(it.keyEnc) == channelHash } ?: return
@@ -208,22 +209,31 @@ class ReceivePipeline(
         val plain = crypto.macThenDecrypt(channel.keyEnc, framed) ?: return
         val (dtype, data) = GroupDataPayload.decodePlaintext(plain) ?: return
         // Reactions/receipts/typing are app-level conventions (03 §6); v1
-        // records reactions as messages so nothing is lost.
-        if (dtype == GroupDataTypes.REACTION && data.isNotEmpty()) {
+        // records reactions as messages attached to their target so nothing
+        // is lost — unmatched targets fall back to a normal message.
+        if (dtype == GroupDataTypes.REACTION) {
+            val (targetTag, senderName, emoji) = ReactionData.decode(data) ?: return
+            if (contacts.observeBlocked(identity.id).first().any { it.name.equals(senderName, ignoreCase = true) }) {
+                return
+            }
             val convId = conversations.ensure(
                 identity.id,
                 if (channel.kind == ChannelKind.PUBLIC) ConversationKind.PUBLIC else ConversationKind.GROUP,
                 channel.id,
             )
+            val target = messages.byPacketTag(identity.id, targetTag)
             messages.insert(
                 Message(
                     id = 0,
                     conversationId = convId,
                     identityId = identity.id,
-                    body = data.decodeToString(),
+                    senderName = senderName.ifBlank { "Unknown" },
+                    body = emoji,
                     kind = MessageKind.REACTION,
-                    sentAt = System.currentTimeMillis(),
+                    sentAt = recvAt,
                     out = false,
+                    // attach only when the target lives in this conversation
+                    replyToId = target?.takeIf { it.conversationId == convId }?.id,
                 ),
             )
         }

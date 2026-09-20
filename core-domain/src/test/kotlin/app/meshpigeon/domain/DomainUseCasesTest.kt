@@ -533,6 +533,64 @@ class DomainUseCasesTest {
     }
 
     @Test
+    fun `group outbox entry is sent once and never retransmitted`() = runTest {
+        val identity = me()
+        val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
+        val channel = channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
+            .let { channels.byId(it)!! }
+        newSendMessage().queueGroup(channel, "heading out")
+
+        val flush = FlushOutbox(outbox, messages, ackTracker, { clockNow })
+        assertEquals(1, flush.tick().size)
+        // no ACKs for group traffic (03 §6): the row must be gone, or every
+        // tick would re-claim and re-broadcast the same packet forever
+        assertTrue(outbox.store.value.isEmpty())
+        assertEquals(DeliveryState.SENT, messages.store.value.single().state)
+        assertEquals(0, flush.tick().size)
+    }
+
+    @Test
+    fun `reaction queues GRP_DATA and lands attached to its target`() = runTest {
+        val identity = me()
+        val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
+        val channel = channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
+            .let { channels.byId(it)!! } // the fake assigns ids on insert
+        val send = newSendMessage()
+        send.queueGroup(channel, "summit by noon")
+        val target = messages.store.value.single()
+        assertEquals(4, target.packetTag!!.size) // outgoing rows carry the tag peers react to
+
+        send.queueReaction(channel, target.conversationId, target, "👍")
+        val reactionEntry = outbox.store.value.last()
+        val reactionPacket = PacketCodec.decode(reactionEntry.packet)!!
+        assertEquals(PacketSpec.PAYLOAD_GRP_DATA, reactionPacket.payloadType)
+        assertNull(reactionEntry.ackKey) // fire-once: no ACK, no retry
+
+        // a peer hears our reaction packet → it attaches to the same message
+        pipeline.onPacket(reactionEntry.packet, wallClock = clockNow)
+        val reaction = messages.store.value.last { it.kind == MessageKind.REACTION }
+        assertEquals("👍", reaction.body)
+        assertEquals("mia", reaction.senderName)
+        assertEquals(target.id, reaction.replyToId)
+    }
+
+    @Test
+    fun `reaction with an unknown target still surfaces`() = runTest {
+        val identity = me()
+        val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
+        channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
+        // nobody sent anything: the reaction's target tag matches nothing
+        pipeline.onPacket(
+            Messages.buildReaction(ch, byteArrayOf(1, 2, 3, 4), "li", "❤️"),
+            wallClock = clockNow,
+        )
+        val reaction = messages.store.value.single()
+        assertEquals(MessageKind.REACTION, reaction.kind)
+        assertEquals("❤️", reaction.body)
+        assertNull(reaction.replyToId)
+    }
+
+    @Test
     fun `requeue rebuilds a failed dm and it confirms`() = runTest {
         val identity = me()
         val peer = crypto.newIdentity()

@@ -127,6 +127,10 @@ class FakeConversationRepository : ConversationRepository {
         store.value = store.value.map { if (it.id == conversation.id) conversation else it }
     }
 
+    override suspend fun delete(conversationId: Long) {
+        store.value = store.value.filterNot { it.id == conversationId }
+    }
+
     override suspend fun bumpUnread(conversationId: Long, delta: Int) {
         store.value = store.value.map { if (it.id == conversationId) it.copy(unreadCount = it.unreadCount + delta) else it }
     }
@@ -173,12 +177,19 @@ class FakeMessageRepository : MessageRepository {
     override suspend fun byAckKey(identityId: Long, ackKey: ByteArray): Message? =
         store.value.firstOrNull { it.identityId == identityId && it.ackKey?.contentEquals(ackKey) == true }
 
+    override suspend fun byPacketTag(identityId: Long, tag: ByteArray): Message? =
+        store.value.firstOrNull { it.identityId == identityId && it.packetTag?.contentEquals(tag) == true }
+
     override suspend fun markUnreadFrom(conversationId: Long, messageId: Long) {
         // simplified: records the marker on the conversation in real impl
     }
 
     override suspend fun delete(id: Long) {
         store.value = store.value.filterNot { it.id == id }
+    }
+
+    override suspend fun deleteForConversation(conversationId: Long) {
+        store.value = store.value.filterNot { it.conversationId == conversationId }
     }
 }
 

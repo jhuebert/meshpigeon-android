@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -154,6 +155,16 @@ class ConversationViewModel(
         }
     }
 
+    /** Targeted reaction (07 §4) — channel conversations only (GRP_DATA). */
+    fun react(message: app.meshpigeon.domain.Message, emoji: String) {
+        viewModelScope.launch {
+            val conv = conversation ?: return@launch
+            if (conv.kind != ConversationKind.DM) {
+                channel?.let { sendMessage.queueReaction(it, conv.id, message, emoji) }
+            }
+        }
+    }
+
     /** Block the sender of a message request (07 §7). */
     fun blockRequest() {
         viewModelScope.launch {
@@ -187,9 +198,15 @@ fun ConversationScreen(
 
     val budget = AckTracker.textBudget(isGroup = false)
     val draftBytes = draft.toByteArray(Charsets.UTF_8).size
+    // reaction rows render attached to (or after) bubbles, so the list holds
+    // fewer items than `messages`
+    val reactions = messages.filter { it.kind == app.meshpigeon.domain.MessageKind.REACTION }
+    val textIds = messages.filter { it.kind != app.meshpigeon.domain.MessageKind.REACTION }.map { it.id }.toSet()
+    val matchedReactions = reactions.count { it.replyToId in textIds }
+    val itemCount = messages.size - reactions.size + (reactions.size - matchedReactions)
 
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+        if (messages.isNotEmpty()) listState.animateScrollToItem((itemCount - 1).coerceAtLeast(0))
     }
 
     Scaffold(
@@ -294,10 +311,30 @@ fun ConversationScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(MeshPigeonSpacing.md),
                 verticalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.xs),
             ) {
-                items(messages, key = { it.id }) { message ->
+                val texts = messages.filter { it.kind != app.meshpigeon.domain.MessageKind.REACTION }
+                val textIds = texts.map { it.id }.toSet()
+                val reactionsByTarget = messages
+                    .filter { it.kind == app.meshpigeon.domain.MessageKind.REACTION }
+                    .groupBy { it.replyToId }
+                val unmatched = reactionsByTarget
+                    .filterKeys { it == null || it !in textIds }
+                    .values.flatten()
+                items(texts, key = { it.id }) { message ->
                     MessageBubble(
                         message = message,
+                        reactions = reactionsByTarget[message.id].orEmpty(),
+                        canReact = !state.isDirect,
+                        onReact = viewModel::react,
                         onRetry = { viewModel.retry(message.id) },
+                    )
+                }
+                // reactions whose target never arrived still surface (07 §4)
+                items(unmatched, key = { "r${it.id}" }) { reaction ->
+                    Text(
+                        "${reaction.senderName ?: "Someone"} reacted ${reaction.body}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = MeshPigeonSpacing.md),
                     )
                 }
             }
@@ -335,10 +372,14 @@ private fun RequestBanner(name: String, onAccept: () -> Unit, onBlock: () -> Uni
 @Composable
 fun MessageBubble(
     message: app.meshpigeon.domain.Message,
+    reactions: List<app.meshpigeon.domain.Message> = emptyList(),
+    canReact: Boolean = false,
+    onReact: (app.meshpigeon.domain.Message, String) -> Unit = { _, _ -> },
     onRetry: (Long) -> Unit = {},
 ) {
     val mine = message.out
     var actionsOpen by remember { mutableStateOf(false) }
+    var emojiOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -352,6 +393,15 @@ fun MessageBubble(
             expanded = actionsOpen,
             onDismissRequest = { actionsOpen = false },
         ) {
+            if (canReact) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("React…") },
+                    onClick = {
+                        actionsOpen = false
+                        emojiOpen = true
+                    },
+                )
+            }
             androidx.compose.material3.DropdownMenuItem(
                 text = { Text("Reply") },
                 onClick = { actionsOpen = false },
@@ -400,9 +450,51 @@ fun MessageBubble(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (reactions.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.xs),
+                    modifier = Modifier.padding(top = MeshPigeonSpacing.xs),
+                ) {
+                    reactions.groupBy { it.body }.forEach { (emoji, group) ->
+                        androidx.compose.material3.Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                        ) {
+                            Text(
+                                if (group.size > 1) "$emoji ${group.size}" else emoji,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = MeshPigeonSpacing.sm, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
+
+    if (emojiOpen) {
+        AlertDialog(
+            onDismissRequest = { emojiOpen = false },
+            title = { Text("React") },
+            text = {
+                Row(horizontalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.md)) {
+                    REACTION_EMOJIS.forEach { emoji ->
+                        TextButton(onClick = {
+                            emojiOpen = false
+                            onReact(message, emoji)
+                        }) {
+                            Text(emoji, style = MaterialTheme.typography.headlineSmall)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { emojiOpen = false }) { Text("Cancel") } },
+        )
+    }
 }
+
+/** The reaction row (07 §4): five fixed emojis, encoded via GRP_DATA. */
+private val REACTION_EMOJIS = listOf("👍", "❤️", "😂", "😮", "😢")
 
 /** Compact status line; long-press → Message details shows everything (07 §4). */
 private fun subInfo(message: app.meshpigeon.domain.Message): String {

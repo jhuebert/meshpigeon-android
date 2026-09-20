@@ -250,6 +250,8 @@ object PacketCodec {
      * computed by the mesh firmware over the packet. The app only needs a
      * stable per-packet identity — we use SHA-256 over the raw bytes.
      */
+    const val PACKET_TAG_SIZE = 4
+
     fun packetTag(raw: ByteArray): ByteArray =
-        Crypto.sha256(raw).copyOf(4)
+        Crypto.sha256(raw).copyOf(PACKET_TAG_SIZE)
 }

@@ -48,6 +48,7 @@ interface ConversationRepository {
     suspend fun byKind(identityId: Long, kind: ConversationKind): Conversation?
     suspend fun ensure(identityId: Long, kind: ConversationKind, refId: Long?): Long
     suspend fun update(conversation: Conversation)
+    suspend fun delete(conversationId: Long)
     suspend fun bumpUnread(conversationId: Long, delta: Int)
     suspend fun markRead(conversationId: Long)
     suspend fun markAllRead(identityId: Long)
@@ -62,8 +63,13 @@ interface MessageRepository {
     suspend fun byId(messageId: Long): Message?
     suspend fun updateState(id: Long, state: DeliveryState, rttMs: Long? = null)
     suspend fun byAckKey(identityId: Long, ackKey: ByteArray): Message?
+    /** Message whose raw packet hashed to `tag` (reaction targeting, 03 §6). */
+    suspend fun byPacketTag(identityId: Long, tag: ByteArray): Message?
     suspend fun markUnreadFrom(conversationId: Long, messageId: Long)
     suspend fun delete(id: Long)
+
+    /** Local channel leave (07 §6): drops the conversation's messages. */
+    suspend fun deleteForConversation(conversationId: Long)
 }
 
 interface OutboxRepository {

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,11 +23,13 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,6 +60,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.meshpigeon.domain.Channel
+import app.meshpigeon.domain.ChannelKind
 import app.meshpigeon.domain.ChannelRepository
 import app.meshpigeon.domain.ContactRepository
 import app.meshpigeon.domain.Conversation
@@ -93,7 +97,7 @@ import kotlinx.coroutines.launch
 class ChatsViewModel(
     private val identities: IdentityRepository,
     private val conversations: ConversationRepository,
-    messages: MessageRepository,
+    private val messages: MessageRepository,
     contacts: ContactRepository,
     private val channels: ChannelRepository,
 ) : ViewModel() {
@@ -171,6 +175,25 @@ class ChatsViewModel(
     /** Channel-level mute (07 §3); applies when the row itself is Default. */
     fun setChannelMuted(channel: Channel, muted: Boolean) {
         viewModelScope.launch { channels.upsert(channel.copy(muted = muted)) }
+    }
+
+    /** Pinned first, then recency (07 §3) — the DAO orders, this persists. */
+    fun setPinned(conversation: Conversation, pinned: Boolean) {
+        viewModelScope.launch { conversations.update(conversation.copy(pinned = pinned)) }
+    }
+
+    /** Rename is local-only: the join key never changes (07 §6). */
+    fun renameChannel(channel: Channel, name: String) {
+        viewModelScope.launch { channels.upsert(channel.copy(name = name)) }
+    }
+
+    /** Local leave (07 §6): channel + conversation go; history optional. */
+    fun deleteChannel(channel: Channel, conversation: Conversation, deleteHistory: Boolean) {
+        viewModelScope.launch {
+            channels.delete(channel.id)
+            conversations.delete(conversation.id)
+            if (deleteHistory) messages.deleteForConversation(conversation.id)
+        }
     }
 }
 
@@ -282,6 +305,11 @@ fun ChatsScreen(
                         onMarkRead = { viewModel.markRead(row.conversation) },
                         onSetNotifyMode = { viewModel.setNotifyMode(row.conversation, it) },
                         onSetChannelMuted = { muted -> row.channel?.let { viewModel.setChannelMuted(it, muted) } },
+                        onTogglePin = { viewModel.setPinned(row.conversation, !row.conversation.pinned) },
+                        onRenameChannel = { name -> row.channel?.let { viewModel.renameChannel(it, name) } },
+                        onDeleteChannel = { deleteHistory ->
+                            row.channel?.let { viewModel.deleteChannel(it, row.conversation, deleteHistory) }
+                        },
                     )
                 }
             }
@@ -303,10 +331,17 @@ fun ChatRow(
     onMarkRead: () -> Unit = {},
     onSetNotifyMode: (NotifyMode) -> Unit = {},
     onSetChannelMuted: (Boolean) -> Unit = {},
+    onTogglePin: () -> Unit = {},
+    onRenameChannel: (String) -> Unit = {},
+    onDeleteChannel: (Boolean) -> Unit = {},
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var notifyDialog by remember { mutableStateOf(false) }
     var shareChannel by remember { mutableStateOf(false) }
+    var renameChannel by remember { mutableStateOf(false) }
+    var deleteChannel by remember { mutableStateOf(false) }
+    // the Public channel is permanent (07 §6) — pin/mute/share only
+    val manageable = channel != null && channel.kind != ChannelKind.PUBLIC
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -321,6 +356,14 @@ fun ChatRow(
             InitialAvatar(name = name, key = avatarKey)
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.sm)) {
+                    if (conversation.pinned) {
+                        Icon(
+                            Icons.Filled.PushPin,
+                            contentDescription = "Pinned",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
                     Text(name, style = MaterialTheme.typography.titleMedium)
                     if (isRequest) {
                         Text(
@@ -350,9 +393,16 @@ fun ChatRow(
         }
     }
 
-    // long-press actions (07 §3): Mark read, Notifications…; channels also
-    // get the channel-level mute and QR/link sharing (07 §6)
+    // long-press actions (07 §3): Pin, Mark read, Notifications…; channels
+    // also get mute, rename/delete and QR/link sharing (07 §6)
     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+        DropdownMenuItem(
+            text = { Text(if (conversation.pinned) "Unpin" else "Pin") },
+            onClick = {
+                menuOpen = false
+                onTogglePin()
+            },
+        )
         DropdownMenuItem(
             text = { Text("Mark read") },
             onClick = {
@@ -383,10 +433,48 @@ fun ChatRow(
                 },
             )
         }
+        if (manageable) {
+            DropdownMenuItem(
+                text = { Text("Rename…") },
+                onClick = {
+                    menuOpen = false
+                    renameChannel = true
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Delete channel") },
+                onClick = {
+                    menuOpen = false
+                    deleteChannel = true
+                },
+            )
+        }
     }
 
     if (shareChannel && channel != null) {
         ShareChannelDialog(channel = channel, onDismiss = { shareChannel = false })
+    }
+
+    if (renameChannel && channel != null) {
+        RenameChannelDialog(
+            channel = channel,
+            onRename = {
+                renameChannel = false
+                onRenameChannel(it)
+            },
+            onDismiss = { renameChannel = false },
+        )
+    }
+
+    if (deleteChannel && channel != null) {
+        DeleteChannelDialog(
+            channel = channel,
+            onDelete = { deleteHistory ->
+                deleteChannel = false
+                onDeleteChannel(deleteHistory)
+            },
+            onDismiss = { deleteChannel = false },
+        )
     }
 
     if (notifyDialog) {
@@ -432,6 +520,61 @@ private fun NotifyModeDialog(current: NotifyMode, onSelect: (NotifyMode) -> Unit
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+/** Local rename (07 §6): the label changes, the join key never does. */
+@Composable
+private fun RenameChannelDialog(
+    channel: Channel,
+    onRename: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(channel.name) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename channel") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                placeholder = { Text("Channel name") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onRename(name.trim()) }, enabled = name.isNotBlank()) { Text("Rename") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Local leave (07 §6): the channel stays on the mesh; history is optional. */
+@Composable
+private fun DeleteChannelDialog(
+    channel: Channel,
+    onDelete: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var deleteHistory by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Leave \"${channel.name}\"?") },
+        text = {
+            Column {
+                Text("You will stop seeing messages from this channel on this device. Others keep chatting — you can always re-join.")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = deleteHistory, onCheckedChange = { deleteHistory = it })
+                    Text("Also delete history", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onDelete(deleteHistory) }) {
+                Text("Leave", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 

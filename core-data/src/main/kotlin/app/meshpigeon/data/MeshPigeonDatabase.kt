@@ -228,7 +228,7 @@ interface ChannelDao {
 
 @Dao
 interface ConversationDao {
-    @Query("SELECT * FROM conversations WHERE identity_id = :identityId ORDER BY last_message_at IS NULL, last_message_at DESC")
+    @Query("SELECT * FROM conversations WHERE identity_id = :identityId ORDER BY pinned DESC, last_message_at IS NULL, last_message_at DESC")
     fun observeAll(identityId: Long): Flow<List<ConversationRow>>
 
     @Query("SELECT * FROM conversations WHERE id = :id")
@@ -257,6 +257,9 @@ interface ConversationDao {
 
     @Query("UPDATE conversations SET last_message_at = :at WHERE id = :id")
     suspend fun touch(id: Long, at: Long)
+
+    @Query("DELETE FROM conversations WHERE id = :id")
+    suspend fun delete(id: Long)
 }
 
 @Dao
@@ -282,6 +285,12 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE identity_id = :identityId AND ack_key = :ackKey LIMIT 1")
     suspend fun byAckKey(identityId: Long, ackKey: ByteArray): MessageRow?
 
+    @Query("SELECT * FROM messages WHERE identity_id = :identityId AND packet_tag = :tag LIMIT 1")
+    suspend fun byPacketTag(identityId: Long, tag: ByteArray): MessageRow?
+
+    @Query("DELETE FROM messages WHERE conversation_id = :conversationId")
+    suspend fun deleteForConversation(conversationId: Long)
+
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun delete(id: Long)
 }
@@ -296,6 +305,9 @@ interface OutboxDao {
 
     @Query("SELECT * FROM outbox WHERE conversation_id = :conversationId AND state = 'QUEUED' ORDER BY id LIMIT 1")
     suspend fun firstQueuedFor(conversationId: Long): OutboxRow?
+
+    @Query("UPDATE outbox SET state = 'SENT' WHERE id = :id")
+    suspend fun markSent(id: Long)
 
     @Update
     suspend fun update(row: OutboxRow)
@@ -500,6 +512,7 @@ class RoomConversationRepository(private val db: MeshPigeonDatabase) : Conversat
     override suspend fun update(conversation: Conversation) {
         db.conversationDao().upsert(conversation.toRow())
     }
+    override suspend fun delete(conversationId: Long) = db.conversationDao().delete(conversationId)
     override suspend fun bumpUnread(conversationId: Long, delta: Int) = db.conversationDao().bumpUnread(conversationId, delta)
     override suspend fun markRead(conversationId: Long) = db.conversationDao().markRead(conversationId)
     override suspend fun markAllRead(identityId: Long) = db.conversationDao().markAllRead(identityId)
@@ -521,6 +534,12 @@ class RoomMessageRepository(private val db: MeshPigeonDatabase) : MessageReposit
     override suspend fun byAckKey(identityId: Long, ackKey: ByteArray): Message? =
         db.messageDao().byAckKey(identityId, ackKey)?.toDomain()
 
+    override suspend fun byPacketTag(identityId: Long, tag: ByteArray): Message? =
+        db.messageDao().byPacketTag(identityId, tag)?.toDomain()
+
+    override suspend fun deleteForConversation(conversationId: Long) =
+        db.messageDao().deleteForConversation(conversationId)
+
     override suspend fun markUnreadFrom(conversationId: Long, messageId: Long) {
         // recorded on the conversation row by the caller (M1 scope)
     }
@@ -536,7 +555,10 @@ class RoomOutboxRepository(private val db: MeshPigeonDatabase) : OutboxRepositor
     override suspend fun update(entry: OutboxEntry) = db.outboxDao().update(entry.toRow())
     override suspend fun remove(id: Long) = db.outboxDao().delete(id)
     override suspend fun markInFlight(conversationId: Long): OutboxEntry? =
-        db.outboxDao().firstQueuedFor(conversationId)?.toDomain()
+        // the claim must persist: resume() distinguishes orphaned in-flight
+        // rows by their SENT state, and QUEUED rows would be re-claimed (and
+        // group entries re-broadcast) on the next tick
+        db.outboxDao().firstQueuedFor(conversationId)?.also { db.outboxDao().markSent(it.id) }?.toDomain()
 }
 
 class RoomRadioTargetRepository(private val db: MeshPigeonDatabase) : RadioTargetRepository {
