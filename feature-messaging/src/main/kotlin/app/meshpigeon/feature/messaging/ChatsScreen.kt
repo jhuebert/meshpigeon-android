@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -46,13 +47,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.meshpigeon.domain.Channel
 import app.meshpigeon.domain.ChannelRepository
 import app.meshpigeon.domain.ContactRepository
 import app.meshpigeon.domain.Conversation
@@ -63,9 +67,11 @@ import app.meshpigeon.domain.Message
 import app.meshpigeon.domain.MessageRepository
 import app.meshpigeon.domain.NotifyMode
 import app.meshpigeon.protocol.DeliveryState
+import app.meshpigeon.protocol.ShareCodec
 import app.meshpigeon.ui.EmptyState
 import app.meshpigeon.ui.InitialAvatar
 import app.meshpigeon.ui.MeshPigeonSpacing
+import app.meshpigeon.ui.QrImage
 import app.meshpigeon.ui.deliveryGlyph
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -89,7 +95,7 @@ class ChatsViewModel(
     private val conversations: ConversationRepository,
     messages: MessageRepository,
     contacts: ContactRepository,
-    channels: ChannelRepository,
+    private val channels: ChannelRepository,
 ) : ViewModel() {
     data class Row(
         val conversation: Conversation,
@@ -98,6 +104,7 @@ class ChatsViewModel(
         val unread: Int,
         val avatarKey: ByteArray,
         val isRequest: Boolean = false,
+        val channel: Channel? = null,
     )
 
     data class ChatsState(
@@ -130,7 +137,7 @@ class ChatsViewModel(
                         }
                         ConversationKind.GROUP, ConversationKind.PUBLIC -> {
                             val channel = channelList.firstOrNull { it.id == conv.refId }
-                            Row(conv, channel?.name ?: "Channel", last?.body ?: "", conv.unreadCount, channel?.keyEnc ?: ByteArray(3))
+                            Row(conv, channel?.name ?: "Channel", last?.body ?: "", conv.unreadCount, channel?.keyEnc ?: ByteArray(3), channel = channel)
                         }
                         ConversationKind.TRACE_LOG -> null
                     }
@@ -159,6 +166,11 @@ class ChatsViewModel(
     /** Per-conversation notification mode (07 §8); the row wins over the channel. */
     fun setNotifyMode(conversation: Conversation, mode: NotifyMode) {
         viewModelScope.launch { conversations.update(conversation.copy(notifyMode = mode)) }
+    }
+
+    /** Channel-level mute (07 §3); applies when the row itself is Default. */
+    fun setChannelMuted(channel: Channel, muted: Boolean) {
+        viewModelScope.launch { channels.upsert(channel.copy(muted = muted)) }
     }
 }
 
@@ -265,9 +277,11 @@ fun ChatsScreen(
                         unread = row.unread,
                         avatarKey = row.avatarKey,
                         isRequest = row.isRequest,
+                        channel = row.channel,
                         onClick = { onOpenConversation(row.conversation) },
                         onMarkRead = { viewModel.markRead(row.conversation) },
                         onSetNotifyMode = { viewModel.setNotifyMode(row.conversation, it) },
+                        onSetChannelMuted = { muted -> row.channel?.let { viewModel.setChannelMuted(it, muted) } },
                     )
                 }
             }
@@ -284,12 +298,15 @@ fun ChatRow(
     unread: Int,
     avatarKey: ByteArray,
     isRequest: Boolean = false,
+    channel: Channel? = null,
     onClick: () -> Unit,
     onMarkRead: () -> Unit = {},
     onSetNotifyMode: (NotifyMode) -> Unit = {},
+    onSetChannelMuted: (Boolean) -> Unit = {},
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var notifyDialog by remember { mutableStateOf(false) }
+    var shareChannel by remember { mutableStateOf(false) }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -312,6 +329,13 @@ fun ChatRow(
                             color = MaterialTheme.colorScheme.tertiary,
                         )
                     }
+                    if (conversation.muted || channel?.muted == true) {
+                        Icon(
+                            Icons.Filled.NotificationsOff,
+                            contentDescription = "Muted",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 Text(
                     snippet,
@@ -326,7 +350,8 @@ fun ChatRow(
         }
     }
 
-    // long-press actions (07 §3): Mark read, Notifications…
+    // long-press actions (07 §3): Mark read, Notifications…; channels also
+    // get the channel-level mute and QR/link sharing (07 §6)
     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
         DropdownMenuItem(
             text = { Text("Mark read") },
@@ -342,6 +367,26 @@ fun ChatRow(
                 notifyDialog = true
             },
         )
+        channel?.let {
+            DropdownMenuItem(
+                text = { Text(if (it.muted) "Unmute channel" else "Mute channel") },
+                onClick = {
+                    menuOpen = false
+                    onSetChannelMuted(!it.muted)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Share channel…") },
+                onClick = {
+                    menuOpen = false
+                    shareChannel = true
+                },
+            )
+        }
+    }
+
+    if (shareChannel && channel != null) {
+        ShareChannelDialog(channel = channel, onDismiss = { shareChannel = false })
     }
 
     if (notifyDialog) {
@@ -387,5 +432,46 @@ private fun NotifyModeDialog(current: NotifyMode, onSelect: (NotifyMode) -> Unit
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+/** Channel join code (07 §6): QR + copyable link, generated fully offline. */
+@Composable
+private fun ShareChannelDialog(channel: Channel, onDismiss: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Share \"${channel.name}\"") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                QrImage(
+                    data = ShareCodec.encodeChannel(channel.name, channel.keyEnc),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = MeshPigeonSpacing.md),
+                )
+                Text(
+                    "Others scan this QR or paste the link to join. Anyone with it can read the channel.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (copied) {
+                    Text(
+                        "Link copied",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = MeshPigeonSpacing.xs),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                clipboard.setText(AnnotatedString(ShareCodec.encodeChannel(channel.name, channel.keyEnc)))
+                copied = true
+            }) { Text("Copy link") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }

@@ -66,6 +66,8 @@ import app.meshpigeon.feature.messaging.ChatsScreen
 import app.meshpigeon.feature.messaging.ChatsViewModel
 import app.meshpigeon.feature.messaging.ConversationScreen
 import app.meshpigeon.feature.messaging.ConversationViewModel
+import app.meshpigeon.feature.messaging.StartChatSheet
+import app.meshpigeon.feature.messaging.StartChatViewModel
 import app.meshpigeon.feature.onboarding.OnboardingScreen
 import app.meshpigeon.feature.onboarding.OnboardingViewModel
 import app.meshpigeon.ui.InitialAvatar
@@ -106,6 +108,7 @@ fun MeshPigeonApp(graph: AppGraph) {
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     var showConnectSheet by remember { mutableStateOf(false) }
+    var showStartChat by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val identities by graph.identities.all().collectAsStateWithLifecycle(initialValue = emptyList())
@@ -218,7 +221,7 @@ fun MeshPigeonApp(graph: AppGraph) {
                     onOpenConversation = { conv ->
                         navController.navigate(Destination.Conversation.of(conv.id))
                     },
-                    onStartChat = { /* start-chat sheet lands with M3 channels */ },
+                    onStartChat = { showStartChat = true },
                     onConnectRadio = { showConnectSheet = true },
                     onOpenDrawer = { scope.launch { drawerState.open() } },
                 )
@@ -273,6 +276,16 @@ fun MeshPigeonApp(graph: AppGraph) {
             }
         }
     }
+    }
+
+    if (showStartChat) {
+        StartChatSheet(
+            viewModel = remember {
+                StartChatViewModel(graph.identities, graph.contacts, graph.conversations, graph.createChannel)
+            },
+            onOpenConversation = { id -> navController.navigate(Destination.Conversation.of(id)) },
+            onDismiss = { showStartChat = false },
+        )
     }
 
     if (showConnectSheet) {

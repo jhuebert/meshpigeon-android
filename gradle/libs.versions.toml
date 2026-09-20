@@ -10,6 +10,7 @@ navigationCompose = "2.9.8"
 lifecycle = "2.9.4"
 coroutines = "1.11.0"
 datastore = "1.1.7"
+zxing = "3.5.3"
 bouncycastle = "1.86"
 junit = "4.13.2"
 turbine = "1.2.1"
@@ -43,6 +44,7 @@ activity-compose = { module = "androidx.activity:activity-compose", version.ref 
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
 lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -34,7 +34,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -42,7 +44,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.meshpigeon.domain.Contact
 import app.meshpigeon.domain.ContactRepository
+import app.meshpigeon.domain.ContactSource
 import app.meshpigeon.domain.IdentityRepository
+import app.meshpigeon.protocol.ShareCodec
 import app.meshpigeon.ui.ConfirmDialog
 import app.meshpigeon.ui.EmptyState
 import app.meshpigeon.ui.InitialAvatar
@@ -98,6 +102,31 @@ class ContactsViewModel(
         }
     }
 
+    /** Import a contact from a shared code (07 §5); reports user-facing feedback. */
+    fun importContact(decoded: ShareCodec.Decoded.Contact, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val identity = identities.active().first() ?: return@launch
+            val existing = contacts.byPublicKey(identity.id, decoded.publicKey)
+            val name = decoded.name.ifBlank { "Contact" }
+            if (existing != null) {
+                onResult("${existing.name} is already in your contacts")
+            } else {
+                contacts.upsert(
+                    Contact(
+                        id = 0,
+                        identityId = identity.id,
+                        publicKey = decoded.publicKey,
+                        name = name,
+                        firstSeenAt = System.currentTimeMillis(),
+                        source = ContactSource.CLIPBOARD,
+                        isRepeater = decoded.meshCoreType == 2,
+                    ),
+                )
+                onResult("Added $name")
+            }
+        }
+    }
+
     private fun launch(block: suspend () -> Unit) {
         viewModelScope.launch { block() }
     }
@@ -121,6 +150,8 @@ fun ContactsScreen(
     var selected by remember { mutableStateOf<Contact?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
     var sayHiFeedback by remember { mutableStateOf<String?>(null) }
+    var pendingImport by remember { mutableStateOf<ShareCodec.Decoded.Contact?>(null) }
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val tabs = listOf("People", "Discovered", "Blocked")
 
@@ -148,6 +179,19 @@ fun ContactsScreen(
                         onClick = {
                             overflowOpen = false
                             scope.launch { sayHiFeedback = onSayHi() }
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Import contact from clipboard") },
+                        onClick = {
+                            overflowOpen = false
+                            val text = clipboard.getText()?.toString().orEmpty()
+                            when (val decoded = ShareCodec.decode(text)) {
+                                is ShareCodec.Decoded.Contact -> pendingImport = decoded
+                                is ShareCodec.Decoded.Channel ->
+                                    sayHiFeedback = "That's a channel code — join it from Chats → Start chat."
+                                null -> sayHiFeedback = "Nothing to import in the clipboard."
+                            }
                         },
                     )
                 }
@@ -204,6 +248,20 @@ fun ContactsScreen(
                 }
             }
         }
+    }
+
+    pendingImport?.let { decoded ->
+        ConfirmDialog(
+            title = "Add contact \"${decoded.name.ifBlank { "Contact" }}\"?",
+            text = "You will be able to message them directly.",
+            confirmLabel = "Add",
+            onConfirm = {
+                val d = decoded
+                pendingImport = null
+                viewModel.importContact(d) { sayHiFeedback = it }
+            },
+            onDismiss = { pendingImport = null },
+        )
     }
 
     if (confirmClearAll) {
