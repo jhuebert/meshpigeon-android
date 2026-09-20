@@ -47,50 +47,116 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.meshpigeon.domain.ChannelRepository
+import app.meshpigeon.domain.ContactRepository
 import app.meshpigeon.domain.Conversation
 import app.meshpigeon.domain.ConversationKind
+import app.meshpigeon.domain.ConversationRepository
+import app.meshpigeon.domain.IdentityRepository
 import app.meshpigeon.domain.Message
+import app.meshpigeon.domain.MessageRepository
 import app.meshpigeon.protocol.DeliveryState
 import app.meshpigeon.ui.EmptyState
 import app.meshpigeon.ui.InitialAvatar
 import app.meshpigeon.ui.MeshPigeonSpacing
 import app.meshpigeon.ui.deliveryGlyph
-import kotlin.random.Random
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * Chats tab (07 §3): conversations ordered pinned-then-recent, unread
- * badges, FAB → Start chat sheet. Offline-first: fully usable with no
- * radio (06 §5).
+ * Chats list (07 §3): live conversations for the active identity, ordered
+ * by the repository (recent first), with last-message snippets and names
+ * resolved from contacts/channels.
  */
-class ChatsViewModel : ViewModel() {
-    data class ChatsState(
-        val conversations: List<Conversation> = emptyList(),
-        val lastSnippets: Map<Long, String> = emptyMap(),
-        val searching: Boolean = false,
-        val query: String = "",
+@OptIn(ExperimentalCoroutinesApi::class)
+class ChatsViewModel(
+    private val identities: IdentityRepository,
+    private val conversations: ConversationRepository,
+    messages: MessageRepository,
+    contacts: ContactRepository,
+    channels: ChannelRepository,
+) : ViewModel() {
+    data class Row(
+        val conversation: Conversation,
+        val name: String,
+        val snippet: String,
+        val unread: Int,
+        val avatarKey: ByteArray,
     )
 
-    private val _state = MutableStateFlow(ChatsState())
-    val state: StateFlow<ChatsState> = _state
+    data class ChatsState(
+        val rows: List<Row> = emptyList(),
+        val query: String = "",
+    ) {
+        val visible: List<Row>
+            get() = if (query.isBlank()) rows
+            else rows.filter { it.name.contains(query, true) || it.snippet.contains(query, true) }
+    }
+
+    private val query = MutableStateFlow("")
+
+    private val rows = identities.active().flatMapLatest { identity ->
+        if (identity == null) {
+            flowOf(emptyList())
+        } else {
+            combine(
+                conversations.observeAll(identity.id),
+                messages.observeLastPerConversation(identity.id),
+                contacts.observe(identity.id),
+                channels.observe(identity.id),
+            ) { convs, lastByConv, contactList, channelList ->
+                convs.mapNotNull { conv ->
+                    val last = lastByConv.firstOrNull { it.conversationId == conv.id }
+                    when (conv.kind) {
+                        ConversationKind.DM -> {
+                            val contact = contactList.firstOrNull { it.id == conv.refId }
+                            Row(conv, contact?.name ?: "Unknown", last?.body ?: "", conv.unreadCount, contact?.publicKey ?: ByteArray(3))
+                        }
+                        ConversationKind.GROUP, ConversationKind.PUBLIC -> {
+                            val channel = channelList.firstOrNull { it.id == conv.refId }
+                            Row(conv, channel?.name ?: "Channel", last?.body ?: "", conv.unreadCount, channel?.keyEnc ?: ByteArray(3))
+                        }
+                        ConversationKind.TRACE_LOG -> null
+                    }
+                }
+            }
+        }
+    }
+
+    val state: StateFlow<ChatsState> = combine(rows, query) { r, q -> ChatsState(r, q) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsState())
+
+    fun setQuery(value: String) {
+        query.value = value
+    }
+
+    fun markAllRead() {
+        viewModelScope.launch {
+            identities.active().first()?.let { conversations.markAllRead(it.id) }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatsScreen(
+    viewModel: ChatsViewModel,
     onOpenConversation: (Conversation) -> Unit,
     onStartChat: () -> Unit,
+    onConnectRadio: () -> Unit,
 ) {
-    var searchQuery by remember { mutableStateOf("") }
+    val state by viewModel.state.collectAsStateWithLifecycle()
     var menuOpen by remember { mutableStateOf(false) }
-
-    // v1 local sample state until the service wires live flows (M1);
-    // Public is the only conversation on first use (hard requirement 07 §6).
-    val public = remember { Conversation(id = 1, identityId = 1, kind = ConversationKind.PUBLIC, refId = null) }
 
     Scaffold(
         topBar = {
@@ -106,7 +172,17 @@ fun ChatsScreen(
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
                             text = { Text("Mark all as read") },
-                            onClick = { menuOpen = false },
+                            onClick = {
+                                menuOpen = false
+                                viewModel.markAllRead()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Connect radio…") },
+                            onClick = {
+                                menuOpen = false
+                                onConnectRadio()
+                            },
                         )
                         DropdownMenuItem(
                             text = { Text("Settings") },
@@ -131,8 +207,8 @@ fun ChatsScreen(
                 .padding(padding),
         ) {
             OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
+                value = state.query,
+                onValueChange = viewModel::setQuery,
                 placeholder = { Text("Search chats and messages") },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -140,14 +216,34 @@ fun ChatsScreen(
                 singleLine = true,
             )
             LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                item {
+                val visible = state.visible
+                if (visible.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = MeshPigeonSpacing.xl),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            EmptyState(
+                                title = if (state.query.isBlank()) "Just Public so far" else "No matches",
+                                body = if (state.query.isBlank()) {
+                                    "People and channels appear here as the mesh carries them in."
+                                } else {
+                                    "Try a different search."
+                                },
+                            )
+                        }
+                    }
+                }
+                items(visible, key = { it.conversation.id }) { row ->
                     ChatRow(
-                        conversation = public,
-                        name = "Public",
-                        snippet = "Say hello to the mesh",
-                        unread = 0,
-                        avatarKey = byteArrayOf(0x2E),
-                        onClick = { onOpenConversation(public) },
+                        conversation = row.conversation,
+                        name = row.name,
+                        snippet = row.snippet,
+                        unread = row.unread,
+                        avatarKey = row.avatarKey,
+                        onClick = { onOpenConversation(row.conversation) },
                     )
                 }
             }

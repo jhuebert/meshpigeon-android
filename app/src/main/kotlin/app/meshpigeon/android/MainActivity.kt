@@ -3,10 +3,6 @@ package app.meshpigeon.android
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import app.meshpigeon.feature.contacts.ContactsScreen
-import app.meshpigeon.feature.messaging.ChatsScreen
-import app.meshpigeon.feature.messaging.ConversationScreen
-import app.meshpigeon.feature.onboarding.OnboardingScreen
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,15 +18,30 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import app.meshpigeon.feature.contacts.ContactsScreen
+import app.meshpigeon.feature.messaging.ChatsScreen
+import app.meshpigeon.feature.messaging.ChatsViewModel
+import app.meshpigeon.feature.messaging.ConversationScreen
+import app.meshpigeon.feature.messaging.ConversationViewModel
+import app.meshpigeon.feature.onboarding.OnboardingScreen
+import app.meshpigeon.feature.onboarding.OnboardingViewModel
 import app.meshpigeon.ui.MeshPigeonTheme
+import kotlinx.coroutines.flow.first
 
 /**
  * MeshPigeon main activity: offline-first home is Chats (00 principle 1),
@@ -39,9 +50,10 @@ import app.meshpigeon.ui.MeshPigeonTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val graph = AppGraph.of(this)
         setContent {
             MeshPigeonTheme {
-                MeshPigeonApp()
+                MeshPigeonApp(graph)
             }
         }
     }
@@ -58,10 +70,19 @@ private sealed class Destination(val route: String) {
 }
 
 @Composable
-fun MeshPigeonApp(startOnOnboarding: Boolean = false) {
+fun MeshPigeonApp(graph: AppGraph) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
+    var showConnectSheet by remember { mutableStateOf(false) }
+
+    // first-run gate: without a profile, start at onboarding (07 §2)
+    var hasProfile by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(Unit) {
+        hasProfile = graph.identities.active().first() != null
+    }
+
+    if (hasProfile == null) return // profile check is a fast local query
 
     Scaffold(
         bottomBar = {
@@ -93,22 +114,47 @@ fun MeshPigeonApp(startOnOnboarding: Boolean = false) {
     ) { padding ->
         NavHost(
             navController = navController,
-            startDestination = if (startOnOnboarding) Destination.Onboarding.route else Destination.Chats.route,
+            startDestination = if (hasProfile == false) Destination.Onboarding.route else Destination.Chats.route,
             modifier = Modifier.padding(padding),
         ) {
             composable(Destination.Onboarding.route) {
-                OnboardingScreen(onFinished = {
-                    navController.navigate(Destination.Chats.route) {
-                        popUpTo(Destination.Onboarding.route) { inclusive = true }
-                    }
-                })
+                val vm: OnboardingViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            OnboardingViewModel(
+                                graph.identities, graph.channels, graph.conversations, graph.crypto,
+                            )
+                        }
+                    },
+                )
+                OnboardingScreen(
+                    onFinished = {
+                        navController.navigate(Destination.Chats.route) {
+                            popUpTo(Destination.Onboarding.route) { inclusive = true }
+                        }
+                    },
+                    onScanForRadios = { showConnectSheet = true },
+                    viewModel = vm,
+                )
             }
             composable(Destination.Chats.route) {
+                val vm: ChatsViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            ChatsViewModel(
+                                graph.identities, graph.conversations, graph.messages,
+                                graph.contacts, graph.channels,
+                            )
+                        }
+                    },
+                )
                 ChatsScreen(
+                    viewModel = vm,
                     onOpenConversation = { conv ->
                         navController.navigate(Destination.Conversation.of(conv.id))
                     },
-                    onStartChat = { /* start-chat sheet (M1) */ },
+                    onStartChat = { /* start-chat sheet lands with M2 contacts */ },
+                    onConnectRadio = { showConnectSheet = true },
                 )
             }
             composable(Destination.Contacts.route) {
@@ -118,17 +164,28 @@ fun MeshPigeonApp(startOnOnboarding: Boolean = false) {
                 MapPlaceholder()
             }
             composable(Destination.Conversation.route) { entry ->
-                val conversationId = entry.arguments?.getString("conversationId")?.toLongOrNull() ?: 1
-                ConversationScreen(
-                    title = "Public",
-                    messages = emptyList(),
-                    onBack = { navController.popBackStack() },
-                    onSend = { text ->
-                        // wired to AppGraph.sendMessage in M1 service wiring
+                val conversationId = entry.arguments?.getString("conversationId")?.toLongOrNull() ?: return@composable
+                val vm: ConversationViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            ConversationViewModel(
+                                graph.identities, graph.conversations, graph.messages,
+                                graph.contacts, graph.channels, graph.sendMessage, conversationId,
+                            )
+                        }
                     },
+                )
+                ConversationScreen(
+                    viewModel = vm,
+                    onBack = { navController.popBackStack() },
+                    onRetry = { /* retry affordance re-enqueues in M2 */ },
                 )
             }
         }
+    }
+
+    if (showConnectSheet) {
+        RadioConnectSheet(graph = graph, onDismiss = { showConnectSheet = false })
     }
 }
 
@@ -154,4 +211,3 @@ class BootReceiver : BroadcastReceiver() {
         }
     }
 }
-

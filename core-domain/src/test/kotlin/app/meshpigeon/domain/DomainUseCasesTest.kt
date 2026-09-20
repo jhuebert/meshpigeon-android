@@ -1,5 +1,6 @@
 package app.meshpigeon.domain
 
+import app.meshpigeon.protocol.Ack
 import app.meshpigeon.protocol.AckTracker
 import app.meshpigeon.protocol.BouncyMeshCrypto
 import app.meshpigeon.protocol.Channels
@@ -13,6 +14,7 @@ import app.meshpigeon.protocol.PathHashSize
 import app.meshpigeon.transport.FakeRadioAdapter
 import app.meshpigeon.transport.RadioSession
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -98,6 +100,11 @@ class DomainUseCasesTest {
         val decoded = PacketCodec.decode(entry.packet)!!
         assertEquals(PacketSpec.PAYLOAD_TXT_MSG, decoded.payloadType)
         assertEquals(PacketSpec.ROUTE_FLOOD, decoded.routeType)
+        // the expected ACK rides on both the outbox row and the message row
+        assertNotNull(entry.ackKey)
+        val msg = messages.store.value.single()
+        assertTrue(msg.ackKey!!.contentEquals(entry.ackKey!!))
+        assertEquals(msg.id, entry.messageId)
     }
 
     @Test
@@ -121,6 +128,56 @@ class DomainUseCasesTest {
         } catch (e: IllegalArgumentException) {
             assertTrue(e.message!!.contains("budget"))
         }
+    }
+
+    @Test
+    fun `end to end dm confirms over the scripted radio`() = runTest {
+        val identity = me()
+        val peer = crypto.newIdentity()
+        contacts.upsert(Contact(0, identity.id, peer.publicKey, "bob", firstSeenAt = 0))
+        newSendMessage().queueDirect(peer.publicKey, "hello bob")
+
+        val adapter = FakeRadioAdapter()
+        val session = RadioSession(adapter, kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined))
+        kotlinx.coroutines.runBlocking { session.start() }
+        val flush = FlushOutbox(outbox, messages, ackTracker, { clockNow })
+        flush.resume()
+
+        // the service loop: flush → SEND_PACKET, and route async frames back
+        val collector = launch(kotlinx.coroutines.Dispatchers.Unconfined) {
+            session.events.collect { frame ->
+                if (frame.cmd != app.meshpigeon.transport.RadioFrame.CMD_RX_PACKET || frame.nonce != 0) return@collect
+                val entry = session.parsePacketEntry(frame.payload) ?: return@collect
+                pipeline.onPacket(raw = entry.raw, rssi = entry.rssi, snr = entry.snr, radioUptimeMs = entry.uptimeMs)
+                if (PacketCodec.decode(entry.raw)?.payloadType == PacketSpec.PAYLOAD_ACK) {
+                    flush.onConfirmed(PacketCodec.decode(entry.raw)!!.payload)
+                }
+            }
+        }
+        kotlinx.coroutines.runBlocking {
+            val tx = flush.tick()
+            assertEquals(1, tx.size)
+            session.sendPacket(tx.single().entry.packet)
+
+            // the peer received and ACKed: it computes the same checksum
+            val expectedAck = Ack.compute(
+                app.meshpigeon.protocol.TxtMsgPayload(clockNow / 1_000, PacketSpec.TXT_TYPE_PLAIN, 0, "hello bob").encode(),
+                identity.publicKey,
+            )
+            adapter.injectPacket(Messages.buildAck(expectedAck))
+        }
+        collector.cancel()
+
+        assertEquals(DeliveryState.CONFIRMED, messages.store.value.single().state)
+        assertTrue(outbox.store.value.isEmpty())
+
+        // and a lost ACK retransmits on the tracker's physics timeout
+        newSendMessage().queueDirect(peer.publicKey, "retry me")
+        flush.resume()
+        assertEquals(1, flush.tick().size)
+        clockNow += 3_000
+        val retry = flush.tick().single()
+        assertTrue(retry.isRetry)
     }
 
     @Test
@@ -321,4 +378,78 @@ class DomainUseCasesTest {
         guard.resolve()
         assertNull(guard.current.value)
     }
+
+    @Test
+    fun `flush sends fifo per conversation and ack confirms`() = runTest {
+        val identity = me()
+        val peer = crypto.newIdentity()
+        contacts.upsert(Contact(0, identity.id, peer.publicKey, "bob", firstSeenAt = 0))
+        val send = newSendMessage()
+        send.queueDirect(peer.publicKey, "one")
+        send.queueDirect(peer.publicKey, "two")
+
+        val flush = FlushOutbox(outbox, messages, ackTracker, { clockNow })
+        flush.resume()
+        val tx = flush.tick()
+        assertEquals(1, tx.size) // FIFO: only the first per conversation
+        assertEquals(0, flush.tick().size) // conversation stays busy until ACK
+
+        val inFlight = outbox.store.value.single { it.state == DeliveryState.SENT }
+        assertTrue(ackTracker.onAcked(inFlight.ackKey!!))
+        flush.onConfirmed(inFlight.ackKey!!)
+        assertTrue(outbox.store.value.none { it.ackKey?.contentEquals(inFlight.ackKey) == true })
+        assertEquals(DeliveryState.CONFIRMED, messages.store.value.single { it.body == "one" }.state)
+
+        val next = flush.tick()
+        assertEquals(1, next.size)
+        assertEquals("two", messages.store.value.single { it.id == next.single().entry.messageId }.body)
+        ackTracker.onAcked(next.single().entry.ackKey!!)
+        flush.onConfirmed(next.single().entry.ackKey!!)
+        assertTrue(outbox.store.value.isEmpty())
+    }
+
+    @Test
+    fun `flush finalizes exhausted sends as failed and late ack confirms`() = runTest {
+        val identity = me()
+        val peer = crypto.newIdentity()
+        contacts.upsert(Contact(0, identity.id, peer.publicKey, "bob", firstSeenAt = 0))
+        val send = newSendMessage()
+        send.queueDirect(peer.publicKey, "lost")
+
+        val flush = FlushOutbox(outbox, messages, ackTracker, { clockNow })
+        flush.resume()
+        assertEquals(1, flush.tick().size)
+        repeat(6) { clockNow += 60_000; flush.tick() } // exhaust retries → FAILED
+        assertTrue(outbox.store.value.isEmpty())
+        assertEquals(DeliveryState.FAILED, messages.store.value.single().state)
+
+        // a late ACK inside the grace window still confirms (pipeline path)
+        pipeline.onPacket(Messages.buildAck(messages.store.value.single().ackKey!!))
+        assertEquals(DeliveryState.CONFIRMED, messages.store.value.single().state)
+    }
+
+    @Test
+    fun `resume requeues rows orphaned in flight`() = runTest {
+        val identity = me()
+        val peer = crypto.newIdentity()
+        contacts.upsert(Contact(0, identity.id, peer.publicKey, "bob", firstSeenAt = 0))
+        newSendMessage().queueDirect(peer.publicKey, "stuck")
+        // a claim orphaned by a restart: in-flight, never ACKed
+        outbox.update(outbox.store.value.single().copy(state = DeliveryState.SENT))
+
+        val flush = FlushOutbox(outbox, messages, ackTracker, { clockNow })
+        flush.resume()
+        assertEquals(DeliveryState.QUEUED, outbox.store.value.single().state)
+        assertEquals(1, flush.tick().size)
+    }
+
+    private fun newSendMessage() = SendMessage(
+        identities, contacts, conversations, messages, outbox,
+        ackTracker, pathCache, crypto,
+        airtimeEstimator = object : AirtimeEstimator {
+            override fun estimate(packetLen: Int) = 100.0
+        },
+        wallClockSec = { clockNow / 1_000 },
+        wallClockMs = { clockNow },
+    )
 }

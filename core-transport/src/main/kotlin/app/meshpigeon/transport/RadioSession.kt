@@ -216,7 +216,7 @@ class RadioSession(
         mutex.withLock {
             pending[nonce] = done
             streamCallbacks[nonce] = { frame ->
-                parseEntry(frame.payload)?.let {
+                parsePacketEntry(frame.payload)?.let {
                     count++
                     onEntry(it)
                 }
@@ -238,7 +238,8 @@ class RadioSession(
         return count
     }
 
-    private fun parseEntry(p: ByteArray): PacketEntry? {
+    /** One RX_PACKET/fetch payload → store record. Async frames use nonce 0. */
+    fun parsePacketEntry(p: ByteArray): PacketEntry? {
         if (p.size < 12) return null
         val seq = p.leU32(0)
         val uptime = p.leU32(4)

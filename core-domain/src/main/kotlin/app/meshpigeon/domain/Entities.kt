@@ -102,6 +102,7 @@ enum class MessageKind { TEXT, CONTACT_CARD, LOCATION, CHANNEL_SHARE, REACTION }
 data class OutboxEntry(
     val id: Long,
     val conversationId: Long,
+    val messageId: Long,
     val packet: ByteArray,
     val ackKey: ByteArray?,
     val attempts: Int,

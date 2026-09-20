@@ -47,10 +47,13 @@ class SendMessage(
         val timestamp = wallClockSec().coerceAtMost(Int.MAX_VALUE.toLong())
         val route = pathCache.routeFor(peerPublicKey[0].toInt() and 0xFF)
         val keypair = IdentityKeyPair(identity.publicKey, identity.privateKeyEnc)
+        // One build serves both routes: the flood packet carries the expected
+        // ACK; direct-routed just rewrites the header path.
+        val flood = Messages.buildDirectMessage(crypto, keypair, peerPublicKey, timestamp, text)
         val built = if (route != null && route.hopCount > 0) {
-            Messages.buildDirectMessageRouted(crypto, keypair, peerPublicKey, route, timestamp, text)
+            Messages.reRouteToDirect(flood.raw, route)
         } else {
-            Messages.buildDirectMessage(crypto, keypair, peerPublicKey, timestamp, text).raw
+            flood.raw
         }
 
         val msgId = messages.insert(
@@ -63,14 +66,16 @@ class SendMessage(
                 out = true,
                 state = DeliveryState.QUEUED,
                 replyToId = replyToId,
+                ackKey = flood.expectedAck,
             ),
         )
         outbox.enqueue(
             OutboxEntry(
                 id = 0,
                 conversationId = convId,
+                messageId = msgId,
                 packet = built,
-                ackKey = null, // the flusher computes/records the expected ACK
+                ackKey = flood.expectedAck,
                 attempts = 0,
                 nextRetryAt = 0,
                 state = DeliveryState.QUEUED,
@@ -112,8 +117,9 @@ class SendMessage(
             OutboxEntry(
                 id = 0,
                 conversationId = convId,
+                messageId = msgId,
                 packet = raw,
-                ackKey = null,
+                ackKey = null, // group messages have no ACKs
                 attempts = 0,
                 nextRetryAt = 0,
                 state = DeliveryState.QUEUED,

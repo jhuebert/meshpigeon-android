@@ -29,24 +29,47 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.meshpigeon.domain.AdvertPolicy
+import app.meshpigeon.domain.Channel
+import app.meshpigeon.domain.ChannelKind
+import app.meshpigeon.domain.ChannelRepository
+import app.meshpigeon.domain.ConversationKind
+import app.meshpigeon.domain.ConversationRepository
+import app.meshpigeon.domain.Identity
+import app.meshpigeon.domain.IdentityRepository
+import app.meshpigeon.protocol.Channels
+import app.meshpigeon.protocol.MeshCrypto
 import app.meshpigeon.domain.RadioPresets
 import app.meshpigeon.domain.RegionPreset
 import app.meshpigeon.ui.MeshPigeonSpacing
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 /**
  * First-run onboarding (07 §2): welcome → name → region → connect radio →
  * Chats. "Skip for now" is always available — offline mode is first-class.
+ * Finishing the region step creates the profile: identity keypair, the
+ * Public channel, and its conversation (07 §6 hard requirement).
  */
-class OnboardingViewModel : ViewModel() {
+class OnboardingViewModel(
+    private val identities: IdentityRepository,
+    private val channels: ChannelRepository,
+    private val conversations: ConversationRepository,
+    private val crypto: MeshCrypto,
+) : ViewModel() {
     data class State(
         val step: Int = 0,
         val name: String = "",
         val region: RegionPreset = RadioPresets.REGIONS.first(),
     )
 
-    private val _state = kotlinx.coroutines.flow.MutableStateFlow(State())
-    val state: kotlinx.coroutines.flow.StateFlow<State> = _state
+    private val _state = MutableStateFlow(State())
+    val state: StateFlow<State> = _state
 
     fun setName(name: String) {
         _state.value = _state.value.copy(name = name)
@@ -57,18 +80,53 @@ class OnboardingViewModel : ViewModel() {
     }
 
     fun next() {
+        val wasRegionStep = _state.value.step == 2
         _state.value = _state.value.copy(step = (_state.value.step + 1).coerceAtMost(3))
+        if (wasRegionStep) viewModelScope.launch { createProfile() }
     }
 
     fun back() {
         _state.value = _state.value.copy(step = (_state.value.step - 1).coerceAtLeast(0))
+    }
+
+    private suspend fun createProfile() {
+        if (identities.active().first() != null) return // already set up
+        val now = System.currentTimeMillis()
+        val pair = crypto.newIdentity()
+        val id = identities.upsert(
+            Identity(
+                id = 0,
+                name = _state.value.name.ifBlank { "Pigeon" },
+                publicKey = pair.publicKey,
+                // keystore sealing lands with the M2 security pass; the
+                // column is already named _enc to keep the schema stable
+                privateKeyEnc = pair.privateKey,
+                flags = 0,
+                createdAt = now,
+                isActive = true,
+                advertPolicy = AdvertPolicy.MANUAL,
+            ),
+        )
+        identities.setActive(id)
+        val channelId = channels.upsert(
+            Channel(
+                id = 0,
+                identityId = id,
+                name = Channels.PUBLIC_NAME,
+                keyEnc = Channels.Channel.public().secret,
+                kind = ChannelKind.PUBLIC,
+                createdAt = now,
+            ),
+        )
+        conversations.ensure(id, ConversationKind.PUBLIC, channelId)
     }
 }
 
 @Composable
 fun OnboardingScreen(
     onFinished: () -> Unit,
-    viewModel: OnboardingViewModel = viewModel(),
+    onScanForRadios: (() -> Unit)? = null,
+    viewModel: OnboardingViewModel,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Column(
@@ -99,6 +157,7 @@ fun OnboardingScreen(
             )
             else -> ConnectStep(
                 onSkip = onFinished,
+                onScan = onScanForRadios,
                 onDone = onFinished,
                 onBack = viewModel::back,
             )
@@ -192,7 +251,7 @@ private fun RegionStep(
 }
 
 @Composable
-private fun ConnectStep(onSkip: () -> Unit, onDone: () -> Unit, onBack: () -> Unit) {
+private fun ConnectStep(onSkip: () -> Unit, onScan: (() -> Unit)?, onDone: () -> Unit, onBack: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.md)) {
         Text("Connect your radio", style = MaterialTheme.typography.headlineSmall)
         Text(
@@ -201,13 +260,18 @@ private fun ConnectStep(onSkip: () -> Unit, onDone: () -> Unit, onBack: () -> Un
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(MeshPigeonSpacing.md))
-        Button(onClick = onDone, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+        Button(onClick = { onScan?.invoke() }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
             Text("Scan for radios")
         }
-        // The scan sheet itself is provided by the connection service UI (M1);
-        // onboarding keeps the flow short (07 §2).
+        // The scan sheet lives with the app's connection UI; onboarding
+        // keeps the flow short (07 §2).
         OutlinedButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
             Text("Skip for now — explore offline")
+        }
+        if (onScan != null) {
+            TextButton(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+                Text("Continue")
+            }
         }
         TextButton(onClick = onBack) { Text("Back") }
     }

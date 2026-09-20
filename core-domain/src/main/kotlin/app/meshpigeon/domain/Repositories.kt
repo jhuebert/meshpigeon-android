@@ -49,6 +49,8 @@ interface ConversationRepository {
 
 interface MessageRepository {
     fun observe(conversationId: Long, limit: Int = 200): Flow<List<Message>>
+    /** The newest message per conversation (chat-list snippets, 07 §3). */
+    fun observeLastPerConversation(identityId: Long): Flow<List<Message>>
     suspend fun insert(message: Message): Long
     suspend fun updateState(id: Long, state: DeliveryState, rttMs: Long? = null)
     suspend fun byAckKey(identityId: Long, ackKey: ByteArray): Message?

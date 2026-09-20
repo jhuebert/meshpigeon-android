@@ -12,6 +12,7 @@ import app.meshpigeon.data.RoomMessageRepository
 import app.meshpigeon.data.RoomOutboxRepository
 import app.meshpigeon.data.RoomRadioTargetRepository
 import app.meshpigeon.domain.InMemoryPathCache
+import app.meshpigeon.domain.FlushOutbox
 import app.meshpigeon.domain.ReceivePipeline
 import app.meshpigeon.domain.SendMessage
 import app.meshpigeon.domain.SyncRadioHistory
@@ -21,10 +22,13 @@ import app.meshpigeon.protocol.ClockMapper
 import app.meshpigeon.protocol.MeshCrypto
 import app.meshpigeon.transport.FakeRadioAdapter
 import app.meshpigeon.transport.RadioAdapter
+import app.meshpigeon.transport.RadioLinkState
 import app.meshpigeon.transport.RadioSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Manual dependency graph (M0). Hilt lands when the feature surface grows
@@ -45,7 +49,10 @@ class AppGraph(context: Context) {
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val crypto: MeshCrypto = BouncyMeshCrypto()
 
-    val db: MeshPigeonDatabase = Room.databaseBuilder(context, MeshPigeonDatabase::class.java, MeshPigeonDatabase.NAME).build()
+    val db: MeshPigeonDatabase = Room.databaseBuilder(context, MeshPigeonDatabase::class.java, MeshPigeonDatabase.NAME)
+        // v1→v2 added the outbox→message link; pre-release installs rebuild.
+        .fallbackToDestructiveMigration(dropAllTables = false)
+        .build()
 
     val identities = RoomIdentityRepository(db)
     val contacts = RoomContactRepository(db)
@@ -85,6 +92,7 @@ class AppGraph(context: Context) {
 
     val connectToRadio = app.meshpigeon.domain.ConnectToRadio(radioTargets)
     val settingsGuard = app.meshpigeon.domain.RadioSettingsGuard()
+    val flushOutbox = FlushOutbox(outbox, messages, ackTracker, { System.currentTimeMillis() })
 
     /**
      * The connected radio session. v0.1 ships the TCP/sim adapter so the
@@ -93,6 +101,18 @@ class AppGraph(context: Context) {
      */
     @Volatile
     var radioSession: RadioSession? = null
+
+    /** Live connection state for the connect sheet and status banners. */
+    data class ConnectionState(
+        val phase: RadioLinkState.Phase = RadioLinkState.Phase.DISCONNECTED,
+        val name: String? = null,
+        val detail: String? = null,
+    )
+
+    val connection = MutableStateFlow(ConnectionState())
+
+    /** Per-radio sync cursors (05 §6). v1: in-memory, resumes within a process. */
+    val historyCursors = HashMap<String, Long>()
 
     fun newRadioSession(adapter: RadioAdapter): RadioSession =
         RadioSession(adapter, appScope).also { session ->

@@ -148,7 +148,13 @@ class ReceivePipeline(
 
         val ts = Crypto.leU32At(plain, 0)
         val text = TxtMsgPayload.nulTerminated(plain, 5) // "name: text"
-        val convId = conversations.ensure(identity.id, ConversationKind.GROUP, channel.id)
+        // The Public channel is a first-class conversation (07 §6); other
+        // channels get GROUP conversations.
+        val convId = conversations.ensure(
+            identity.id,
+            if (channel.kind == ChannelKind.PUBLIC) ConversationKind.PUBLIC else ConversationKind.GROUP,
+            channel.id,
+        )
         conversations.bumpUnread(convId, 1)
         messages.insert(
             Message(
@@ -179,7 +185,11 @@ class ReceivePipeline(
         // Reactions/receipts/typing are app-level conventions (03 §6); v1
         // records reactions as messages so nothing is lost.
         if (dtype == GroupDataTypes.REACTION && data.isNotEmpty()) {
-            val convId = conversations.ensure(identity.id, ConversationKind.GROUP, channel.id)
+            val convId = conversations.ensure(
+                identity.id,
+                if (channel.kind == ChannelKind.PUBLIC) ConversationKind.PUBLIC else ConversationKind.GROUP,
+                channel.id,
+            )
             messages.insert(
                 Message(
                     id = 0,

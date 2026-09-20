@@ -121,6 +121,7 @@ data class MessageRow(
 data class OutboxRow(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val conversation_id: Long,
+    val message_id: Long,
     val packet: ByteArray,
     val ack_key: ByteArray?,
     val attempts: Int,
@@ -248,6 +249,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversation_id = :conversationId ORDER BY sent_at ASC LIMIT :limit")
     fun observe(conversationId: Long, limit: Int): Flow<List<MessageRow>>
 
+    @Query("SELECT * FROM messages WHERE identity_id = :identityId AND id IN (SELECT MAX(id) FROM messages GROUP BY conversation_id)")
+    fun observeLastPerConversation(identityId: Long): Flow<List<MessageRow>>
+
     @Insert
     suspend fun insert(row: MessageRow): Long
 
@@ -269,8 +273,8 @@ interface OutboxDao {
     @Query("SELECT * FROM outbox WHERE next_retry_at <= :now ORDER BY id LIMIT :limit")
     fun due(now: Long, limit: Int): Flow<List<OutboxRow>>
 
-    @Query("SELECT * FROM outbox WHERE conversation_id = :conversationId ORDER BY id LIMIT 1")
-    suspend fun firstFor(conversationId: Long): OutboxRow?
+    @Query("SELECT * FROM outbox WHERE conversation_id = :conversationId AND state = 'QUEUED' ORDER BY id LIMIT 1")
+    suspend fun firstQueuedFor(conversationId: Long): OutboxRow?
 
     @Update
     suspend fun update(row: OutboxRow)
@@ -312,7 +316,7 @@ interface PacketTagDao {
         ConversationRow::class, MessageRow::class, OutboxRow::class,
         RadioTargetRow::class, PacketTagRow::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class MeshPigeonDatabase : RoomDatabase() {
@@ -383,12 +387,12 @@ internal fun Message.toRow() = MessageRow(
 )
 
 internal fun OutboxRow.toDomain() = OutboxEntry(
-    id, conversation_id, packet, ack_key, attempts, next_retry_at,
+    id, conversation_id, message_id, packet, ack_key, attempts, next_retry_at,
     DeliveryState.valueOf(state), airtime_ms, hops, direct,
 )
 
 internal fun OutboxEntry.toRow() = OutboxRow(
-    id, conversationId, packet, ackKey, attempts, nextRetryAt, state.name,
+    id, conversationId, messageId, packet, ackKey, attempts, nextRetryAt, state.name,
     airtimeMs, hops, direct,
 )
 
@@ -474,6 +478,9 @@ class RoomMessageRepository(private val db: MeshPigeonDatabase) : MessageReposit
     override fun observe(conversationId: Long, limit: Int): Flow<List<Message>> =
         db.messageDao().observe(conversationId, limit).map { l -> l.map { it.toDomain() } }
 
+    override fun observeLastPerConversation(identityId: Long): Flow<List<Message>> =
+        db.messageDao().observeLastPerConversation(identityId).map { l -> l.map { it.toDomain() } }
+
     override suspend fun insert(message: Message): Long = db.messageDao().insert(message.toRow())
     override suspend fun updateState(id: Long, state: DeliveryState, rttMs: Long?) =
         db.messageDao().updateState(id, state.name, rttMs)
@@ -496,7 +503,7 @@ class RoomOutboxRepository(private val db: MeshPigeonDatabase) : OutboxRepositor
     override suspend fun update(entry: OutboxEntry) = db.outboxDao().update(entry.toRow())
     override suspend fun remove(id: Long) = db.outboxDao().delete(id)
     override suspend fun markInFlight(conversationId: Long): OutboxEntry? =
-        db.outboxDao().firstFor(conversationId)?.toDomain()
+        db.outboxDao().firstQueuedFor(conversationId)?.toDomain()
 }
 
 class RoomRadioTargetRepository(private val db: MeshPigeonDatabase) : RadioTargetRepository {

@@ -38,10 +38,103 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import app.meshpigeon.domain.ChannelRepository
+import app.meshpigeon.domain.ContactRepository
+import app.meshpigeon.domain.ConversationKind
+import app.meshpigeon.domain.ConversationRepository
+import app.meshpigeon.domain.IdentityRepository
+import app.meshpigeon.domain.MessageRepository
+import app.meshpigeon.domain.SendMessage
 import app.meshpigeon.protocol.AckTracker
 import app.meshpigeon.protocol.DeliveryState
 import app.meshpigeon.ui.MeshPigeonSpacing
 import app.meshpigeon.ui.deliveryGlyph
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+/**
+ * Conversation view model (07 §4): live messages for one conversation,
+ * send via [SendMessage] (DM / channel), mark-read on open.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class ConversationViewModel(
+    identities: IdentityRepository,
+    private val conversations: ConversationRepository,
+    messages: MessageRepository,
+    contacts: ContactRepository,
+    channels: ChannelRepository,
+    private val sendMessage: SendMessage,
+    conversationId: Long,
+) : ViewModel() {
+    data class UiState(
+        val title: String = "",
+        val messages: List<app.meshpigeon.domain.Message> = emptyList(),
+        val isDirect: Boolean = true,
+    )
+
+    private val _state = MutableStateFlow(UiState())
+    val state: StateFlow<UiState> = _state
+
+    // latest rows resolved from the flows (send path uses them)
+    private var conversation: app.meshpigeon.domain.Conversation? = null
+    private var peer: app.meshpigeon.domain.Contact? = null
+    private var channel: app.meshpigeon.domain.Channel? = null
+
+    init {
+        viewModelScope.launch { conversations.markRead(conversationId) }
+        viewModelScope.launch {
+            conversations.observe(conversationId).flatMapLatest { conv ->
+                this@ConversationViewModel.conversation = conv
+                if (conv == null) {
+                    flowOf(UiState())
+                } else {
+                    combine(
+                        messages.observe(conversationId),
+                        contacts.observe(conv.identityId),
+                        channels.observe(conv.identityId),
+                    ) { msgs, contactList, channelList ->
+                        val contact = contactList.firstOrNull { it.id == conv.refId }
+                        val ch = channelList.firstOrNull { it.id == conv.refId }
+                        this@ConversationViewModel.peer = contact
+                        this@ConversationViewModel.channel = ch
+                        UiState(
+                            title = when (conv.kind) {
+                                ConversationKind.DM -> contact?.name ?: "Unknown"
+                                ConversationKind.GROUP, ConversationKind.PUBLIC -> ch?.name ?: "Channel"
+                                ConversationKind.TRACE_LOG -> "Trace"
+                            },
+                            messages = msgs,
+                            isDirect = conv.kind == ConversationKind.DM,
+                        )
+                    }
+                }
+            }.collect { _state.value = it }
+        }
+    }
+
+    /** Composer → SendMessage (queue) → outbox; the service flushes. */
+    fun send(text: String) {
+        viewModelScope.launch {
+            val conv = conversation ?: return@launch
+            when (conv.kind) {
+                ConversationKind.DM -> peer?.let { sendMessage.queueDirect(it.publicKey, text) }
+                ConversationKind.GROUP, ConversationKind.PUBLIC ->
+                    channel?.let { sendMessage.queueGroup(it, text) }
+                ConversationKind.TRACE_LOG -> Unit
+            }
+        }
+    }
+}
 
 /**
  * Conversation view (07 §4): bubbles, delivery states the user can read
@@ -51,12 +144,13 @@ import app.meshpigeon.ui.deliveryGlyph
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationScreen(
-    title: String,
-    messages: List<app.meshpigeon.domain.Message>,
+    viewModel: ConversationViewModel,
     onBack: () -> Unit,
-    onSend: (String) -> Unit,
     onRetry: (Long) -> Unit = {},
 ) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val title = state.title
+    val messages = state.messages
     var draft by remember { mutableStateOf("") }
     var longPressed by remember { mutableStateOf<Long?>(null) }
     val listState = rememberLazyListState()
@@ -116,7 +210,7 @@ fun ConversationScreen(
                     IconButton(
                         onClick = {
                             if (draft.isNotBlank() && draftBytes <= budget) {
-                                onSend(draft)
+                                viewModel.send(draft)
                                 draft = ""
                             }
                         },
@@ -140,7 +234,7 @@ fun ConversationScreen(
                     title = "No messages yet",
                     body = "Say hello — it goes out when your radio is connected.",
                     actionLabel = "Say hello",
-                    onAction = { onSend("Hello!") },
+                    onAction = { viewModel.send("Hello!") },
                 )
             }
         } else {

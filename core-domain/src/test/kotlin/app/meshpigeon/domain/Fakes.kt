@@ -134,6 +134,12 @@ class FakeMessageRepository : MessageRepository {
     override fun observe(conversationId: Long, limit: Int): Flow<List<Message>> =
         store.map { list -> list.filter { it.conversationId == conversationId }.takeLast(limit) }
 
+    override fun observeLastPerConversation(identityId: Long): Flow<List<Message>> =
+        store.map { list ->
+            list.filter { it.identityId == identityId }
+                .groupBy { it.conversationId }.values.map { it.last() }
+        }
+
     override suspend fun insert(message: Message): Long {
         val id = nextId++
         store.value = store.value + message.copy(id = id)
