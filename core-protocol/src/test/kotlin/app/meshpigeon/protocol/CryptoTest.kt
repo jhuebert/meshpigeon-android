@@ -268,39 +268,16 @@ class CryptoTest {
     }
 
     @Test
-    fun `group data reaction round trip`() {
+    fun `group data round trip with a future sub-message type`() {
         val ch = Channels.Channel.hashtag("hikers")
-        val data = "👍".toByteArray(Charsets.UTF_8)
-        val raw = Messages.buildGroupData(ch, GroupDataTypes.REACTION, data)
+        val data = "typing".toByteArray(Charsets.UTF_8)
+        val raw = Messages.buildGroupData(ch, GroupDataTypes.TYPING, data)
         val packet = PacketCodec.decode(raw)!!
         assertEquals(PacketSpec.PAYLOAD_GRP_DATA, packet.payloadType)
         val framed = packet.payload.copyOfRange(1, packet.payload.size)
         val plain = ch.macThenDecrypt(crypto, framed)!!
         val (dtype, decoded) = GroupDataPayload.decodePlaintext(plain)!!
-        assertEquals(GroupDataTypes.REACTION, dtype)
+        assertEquals(GroupDataTypes.TYPING, dtype)
         assertArrayEquals(data, decoded)
-    }
-
-    @Test
-    fun `targeted reaction round trip carries target, name and emoji`() {
-        val ch = Channels.Channel.hashtag("hikers")
-        val targetTag = byteArrayOf(0x12, 0x34.toByte(), 0x56, 0x78.toByte())
-        val raw = Messages.buildReaction(ch, targetTag, "mia", "❤️")
-        val packet = PacketCodec.decode(raw)!!
-        assertEquals(PacketSpec.PAYLOAD_GRP_DATA, packet.payloadType)
-        val framed = packet.payload.copyOfRange(1, packet.payload.size)
-        val plain = ch.macThenDecrypt(crypto, framed)!!
-        val (dtype, data) = GroupDataPayload.decodePlaintext(plain)!!
-        assertEquals(GroupDataTypes.REACTION, dtype)
-        val (decodedTag, name, emoji) = ReactionData.decode(data)!!
-        assertArrayEquals(targetTag, decodedTag)
-        assertEquals("mia", name)
-        assertEquals("❤️", emoji)
-    }
-
-    @Test
-    fun `malformed reaction data is rejected`() {
-        assertNull(ReactionData.decode(byteArrayOf(1, 2, 3, 4, 2, 'a'.code.toByte()))) // truncated name
-        assertNull(ReactionData.decode(ByteArray(5)))
     }
 }

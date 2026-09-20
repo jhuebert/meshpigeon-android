@@ -621,22 +621,6 @@ class DomainUseCasesTest {
     }
 
     @Test
-    fun `legacy GRP_DATA reaction still surfaces`() = runTest {
-        val identity = me()
-        val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
-        channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
-        // nobody sent anything: the legacy reaction's target tag matches nothing
-        pipeline.onPacket(
-            Messages.buildReaction(ch, byteArrayOf(1, 2, 3, 4), "li", "❤️"),
-            wallClock = clockNow,
-        )
-        val reaction = messages.store.value.single()
-        assertEquals(MessageKind.REACTION, reaction.kind)
-        assertEquals("❤️", reaction.body)
-        assertNull(reaction.replyToId)
-    }
-
-    @Test
     fun `requeue rebuilds a failed dm and it confirms`() = runTest {
         val identity = me()
         val peer = crypto.newIdentity()

@@ -82,7 +82,7 @@ object Messages {
         )
     }
 
-    /** Build a GRP_DATA sub-message (reactions, receipts, typing…). */
+    /** Build a GRP_DATA sub-message (future app-to-app conventions, 03 §6). */
     fun buildGroupData(
         channel: Channels.Channel,
         dataType: Int,
@@ -100,15 +100,6 @@ object Messages {
             payload,
         )
     }
-
-    /** Build a targeted reaction (GRP_DATA, 03 §6). */
-    fun buildReaction(
-        channel: Channels.Channel,
-        targetTag: ByteArray,
-        senderName: String,
-        emoji: String,
-    ): ByteArray =
-        buildGroupData(channel, GroupDataTypes.REACTION, ReactionData.encode(targetTag, senderName, emoji))
 
     /** Build an ACK packet answering a received direct TXT_MSG. */
     fun buildAck(checksum: ByteArray): ByteArray =

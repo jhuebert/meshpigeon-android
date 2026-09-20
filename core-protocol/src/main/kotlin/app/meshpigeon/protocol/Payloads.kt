@@ -155,39 +155,9 @@ data class GroupTxtPayload(
 
 /** GRP_DATA sub-message types MeshPigeon layers on top (03 §6, app-to-app). */
 object GroupDataTypes {
-    const val REACTION = 0x0001
     const val REPLY_HINT = 0x0002
     const val READ_RECEIPT = 0x0003
     const val TYPING = 0x0004
-}
-
-/**
- * REACTION GRP_DATA body (03 §6): `[target_tag:4][name_len:1][name][emoji]`,
- * targeted at the packet tag (SHA-256 prefix over the raw packet, `PacketCodec
- * .packetTag`) of the reacted-to message. Group traffic carries only display
- * names, so the sender's name rides along.
- */
-object ReactionData {
-    fun encode(targetTag: ByteArray, senderName: String, emoji: String): ByteArray {
-        require(targetTag.size == PacketCodec.PACKET_TAG_SIZE) { "target tag must be ${PacketCodec.PACKET_TAG_SIZE} bytes" }
-        val name = senderName.toByteArray(Charsets.UTF_8)
-        require(name.size <= 255) { "sender name too long" }
-        return targetTag + byteArrayOf(name.size.toByte()) + name +
-            emoji.toByteArray(Charsets.UTF_8)
-    }
-
-    /** Returns (target tag, sender name, emoji) or null on malformed input. */
-    fun decode(data: ByteArray): Triple<ByteArray, String, String>? {
-        if (data.size < PacketCodec.PACKET_TAG_SIZE + 2) return null
-        val nameLen = data[PacketCodec.PACKET_TAG_SIZE].toInt() and 0xFF
-        val nameEnd = PacketCodec.PACKET_TAG_SIZE + 1 + nameLen
-        if (data.size <= nameEnd) return null
-        return Triple(
-            data.copyOfRange(0, PacketCodec.PACKET_TAG_SIZE),
-            data.decodeToString(PacketCodec.PACKET_TAG_SIZE + 1, nameEnd),
-            data.decodeToString(nameEnd, data.size),
-        )
-    }
 }
 
 data class GroupDataPayload(

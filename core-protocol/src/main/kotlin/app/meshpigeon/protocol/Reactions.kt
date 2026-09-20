@@ -12,9 +12,7 @@ package app.meshpigeon.protocol
  * MeshPigeon parses it and attaches the emoji to the newest message by
  * `<target sender>` whose body starts with the quoted text (quotes may be
  * truncated to the channel budget; the marker `…` rides inside the quotes).
- * Unmatched targets fall back to a normal message so nothing is lost. The
- * legacy GRP_DATA reaction ([ReactionData]) stays decode-only for app-to-app
- * compat.
+ * Unmatched targets fall back to a normal message so nothing is lost.
  *
  * (MeshCore Open's `r:<hash>:<index>` format was considered and rejected:
  * its target hash is Dart's implementation-defined `String.hashCode` and its
