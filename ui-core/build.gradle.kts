@@ -28,6 +28,11 @@ dependencies {
     api(libs.compose.material.icons)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.zxing.core)
+    implementation(libs.activity.compose)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
 
+    testImplementation(libs.junit)
     debugImplementation(libs.compose.ui.tooling)
 }

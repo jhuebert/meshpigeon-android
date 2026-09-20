@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,6 +39,7 @@ import app.meshpigeon.protocol.ShareCodec
 import app.meshpigeon.ui.ConfirmDialog
 import app.meshpigeon.ui.InitialAvatar
 import app.meshpigeon.ui.MeshPigeonSpacing
+import app.meshpigeon.ui.QrScanner
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -61,7 +64,7 @@ class StartChatViewModel(
     private val conversations: ConversationRepository,
     private val createChannel: CreateChannel,
 ) : ViewModel() {
-    enum class Panel { MENU, DIRECT, PRIVATE, SHARED, JOIN }
+    enum class Panel { MENU, DIRECT, PRIVATE, SHARED, JOIN, SCANNING }
 
     data class State(
         val people: List<Contact> = emptyList(),
@@ -141,6 +144,17 @@ fun StartChatSheet(
     var joinName by remember { mutableStateOf<String?>(null) }
     var joinSecret by remember { mutableStateOf<ByteArray?>(null) }
 
+    val previewJoin: (String) -> String? = { text ->
+        val decoded = viewModel.decode(text)
+        if (decoded is ShareCodec.Decoded.Channel) {
+            joinName = decoded.name
+            joinSecret = decoded.secret
+            null
+        } else {
+            "That doesn't look like a channel code."
+        }
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         when (panel) {
             StartChatViewModel.Panel.MENU -> MenuPanel(onPick = { panel = it })
@@ -186,17 +200,34 @@ fun StartChatSheet(
                 },
             )
             StartChatViewModel.Panel.JOIN -> JoinPanel(
-                onPreview = { text ->
-                    val decoded = viewModel.decode(text)
-                    if (decoded is ShareCodec.Decoded.Channel) {
-                        joinName = decoded.name
-                        joinSecret = decoded.secret
-                        null
-                    } else {
-                        "That doesn't look like a channel code."
-                    }
-                },
+                onPreview = previewJoin,
+                onScan = { panel = StartChatViewModel.Panel.SCANNING },
             )
+            StartChatViewModel.Panel.SCANNING -> {
+                var scanError by remember { mutableStateOf<String?>(null) }
+                Column(modifier = Modifier.fillMaxWidth().height(460.dp)) {
+                    scanError?.let {
+                        Text(
+                            it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(horizontal = MeshPigeonSpacing.lg),
+                        )
+                    }
+                    QrScanner(
+                        onResult = { text ->
+                            val error = previewJoin(text)
+                            if (error == null) {
+                                panel = StartChatViewModel.Panel.JOIN
+                            } else {
+                                scanError = error
+                            }
+                        },
+                        onDismiss = { panel = StartChatViewModel.Panel.JOIN },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
         }
     }
 
@@ -359,7 +390,7 @@ private fun ChannelFormPanel(
 }
 
 @Composable
-private fun JoinPanel(onPreview: (text: String) -> String?) {
+private fun JoinPanel(onPreview: (text: String) -> String?, onScan: () -> Unit) {
     var text by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     Column(
@@ -392,9 +423,12 @@ private fun JoinPanel(onPreview: (text: String) -> String?) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = MeshPigeonSpacing.md),
-            horizontalArrangement = Arrangement.End,
         ) {
-            TextButton(onClick = { error = onPreview(text) }) { Text("Preview") }
+            TextButton(onClick = onScan) { Text("Scan QR code") }
+            TextButton(
+                onClick = { error = onPreview(text) },
+                modifier = Modifier.weight(1f),
+            ) { Text("Paste") }
         }
     }
 }

@@ -21,6 +21,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -39,6 +40,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,6 +54,7 @@ import app.meshpigeon.ui.ConfirmDialog
 import app.meshpigeon.ui.EmptyState
 import app.meshpigeon.ui.InitialAvatar
 import app.meshpigeon.ui.MeshPigeonSpacing
+import app.meshpigeon.ui.QrScanner
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -103,7 +107,11 @@ class ContactsViewModel(
     }
 
     /** Import a contact from a shared code (07 §5); reports user-facing feedback. */
-    fun importContact(decoded: ShareCodec.Decoded.Contact, onResult: (String) -> Unit) {
+    fun importContact(
+        decoded: ShareCodec.Decoded.Contact,
+        onResult: (String) -> Unit,
+        source: ContactSource = ContactSource.CLIPBOARD,
+    ) {
         viewModelScope.launch {
             val identity = identities.active().first() ?: return@launch
             val existing = contacts.byPublicKey(identity.id, decoded.publicKey)
@@ -118,7 +126,7 @@ class ContactsViewModel(
                         publicKey = decoded.publicKey,
                         name = name,
                         firstSeenAt = System.currentTimeMillis(),
-                        source = ContactSource.CLIPBOARD,
+                        source = source,
                         isRepeater = decoded.meshCoreType == 2,
                     ),
                 )
@@ -151,9 +159,20 @@ fun ContactsScreen(
     var overflowOpen by remember { mutableStateOf(false) }
     var sayHiFeedback by remember { mutableStateOf<String?>(null) }
     var pendingImport by remember { mutableStateOf<ShareCodec.Decoded.Contact?>(null) }
+    var scanning by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val tabs = listOf("People", "Discovered", "Blocked")
+
+    /** Decode a scanned/pasted code and queue the add-contact preview. */
+    fun importFromCode(text: String, nothingFound: String) {
+        when (val decoded = ShareCodec.decode(text)) {
+            is ShareCodec.Decoded.Contact -> pendingImport = decoded
+            is ShareCodec.Decoded.Channel ->
+                sayHiFeedback = "That's a channel code — join it from Chats → Start chat."
+            null -> sayHiFeedback = nothingFound
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -185,13 +204,17 @@ fun ContactsScreen(
                         text = { Text("Import contact from clipboard") },
                         onClick = {
                             overflowOpen = false
-                            val text = clipboard.getText()?.toString().orEmpty()
-                            when (val decoded = ShareCodec.decode(text)) {
-                                is ShareCodec.Decoded.Contact -> pendingImport = decoded
-                                is ShareCodec.Decoded.Channel ->
-                                    sayHiFeedback = "That's a channel code — join it from Chats → Start chat."
-                                null -> sayHiFeedback = "Nothing to import in the clipboard."
-                            }
+                            importFromCode(
+                                clipboard.getText()?.toString().orEmpty(),
+                                "Nothing to import in the clipboard.",
+                            )
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Import contact from QR") },
+                        onClick = {
+                            overflowOpen = false
+                            scanning = true
                         },
                     )
                 }
@@ -258,10 +281,28 @@ fun ContactsScreen(
             onConfirm = {
                 val d = decoded
                 pendingImport = null
-                viewModel.importContact(d) { sayHiFeedback = it }
+                viewModel.importContact(d, onResult = { sayHiFeedback = it })
             },
             onDismiss = { pendingImport = null },
         )
+    }
+
+    if (scanning) {
+        Dialog(
+            onDismissRequest = { scanning = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(modifier = Modifier.fillMaxSize()) {
+                QrScanner(
+                    onResult = { text ->
+                        scanning = false
+                        importFromCode(text, "Could not read a contact code.")
+                    },
+                    onDismiss = { scanning = false },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
     }
 
     if (confirmClearAll) {
