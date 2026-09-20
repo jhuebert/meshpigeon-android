@@ -572,7 +572,7 @@ class DomainUseCasesTest {
         val framed = packet.payload.copyOfRange(1, packet.payload.size)
         val plain = ch.macThenDecrypt(crypto, framed)!!
         val text = TxtMsgPayload.nulTerminated(plain, 5)
-        assertEquals("mia: @[mia] summit by noon 👍", text)
+        assertEquals("mia: @[mia] \"summit by noon\"\n👍", text)
     }
 
     @Test
@@ -589,7 +589,7 @@ class DomainUseCasesTest {
         pipeline.onPacket(
             Messages.buildGroupMessage(
                 ch, 1_700_000_002L,
-                "li: @[mia] I had a really good time at the fair this evening ❤️",
+                "li: @[mia] \"I had a really good time at the fair this evening\"\n❤️",
             ),
             wallClock = clockNow,
         )
@@ -611,13 +611,13 @@ class DomainUseCasesTest {
         pipeline.onPacket(
             Messages.buildGroupMessage(
                 ch, 1_700_000_003L,
-                "li: @[mia] wrong quote 👍",
+                "li: @[mia] \"wrong quote\"\n👍",
             ),
             wallClock = clockNow,
         )
         val msg = messages.store.value.single()
         assertEquals(MessageKind.TEXT, msg.kind)
-        assertEquals("@[mia] wrong quote 👍", msg.body)
+        assertEquals("@[mia] \"wrong quote\"\n👍", msg.body)
     }
 
     @Test

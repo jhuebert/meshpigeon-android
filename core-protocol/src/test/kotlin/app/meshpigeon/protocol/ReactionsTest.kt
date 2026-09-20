@@ -11,7 +11,7 @@ class ReactionsTest {
     @Test
     fun `encode and parse round trip`() {
         val text = Reactions.encode("bob", "I had a really good time at the fair", "❤️", 170)
-        assertEquals("@[bob] I had a really good time at the fair ❤️", text)
+        assertEquals("@[bob] \"I had a really good time at the fair\"\n❤️", text)
         val (target, quote, emoji) = Reactions.parse(text)!!
         assertEquals("bob", target)
         assertEquals("I had a really good time at the fair", quote)
@@ -22,14 +22,14 @@ class ReactionsTest {
     fun `quote is truncated to the budget with an ellipsis`() {
         val long = "a".repeat(300)
         val text = Reactions.encode("bob", long, "👍", 40)
-        // prefix + quote + marker + emoji must fit the budget
+        // prefix + quoted truncation + emoji line must fit the budget
         assertTrue(Reactions.utf8Length(text) <= 40)
         val (target, quote, emoji) = Reactions.parse(text)!!
         assertEquals("bob", target)
         assertEquals("👍", emoji)
         // the truncated quote is still a prefix of the target body
         assertTrue(long.startsWith(quote.removeSuffix("…")))
-        assertTrue(text.endsWith("👍"))
+        assertTrue(text.endsWith("\n👍"))
     }
 
     @Test
@@ -54,8 +54,22 @@ class ReactionsTest {
         assertNull(Reactions.parse("👍")) // bare emoji is a message, not a reaction
         assertNull(Reactions.parse("@[bob] no emoji here"))
         assertNull(Reactions.parse("@[bob] unknown emoji 🤷"))
-        assertNull(Reactions.parse("@[] 👍"))
-        assertNull(Reactions.parse("@[bob] 👍")) // empty quote
-        assertNull(Reactions.parse("@bob no brackets 👍"))
+        assertNull(Reactions.parse("@[bob] unknown emoji\n🤷"))
+        assertNull(Reactions.parse("@[] \"quote\"\n👍")) // empty target
+        assertNull(Reactions.parse("@[bob] \"\"\n👍")) // empty quote
+        assertNull(Reactions.parse("@[bob] \"quote\" 👍")) // emoji not on its own line
+        assertNull(Reactions.parse("@[bob] \"unterminated\n👍")) // no closing quote
+        assertNull(Reactions.parse("@[bob] \"trailing junk\" x\n👍"))
+        assertNull(Reactions.parse("@bob \"quote\"\n👍")) // no brackets
+    }
+
+    @Test
+    fun `quotes and newlines inside the target text survive round trip`() {
+        val body = "saying \"hi\" there"
+        val text = Reactions.encode("bob", body, "👍", 170)
+        val (target, quote, emoji) = Reactions.parse(text)!!
+        assertEquals("bob", target)
+        assertEquals(body, quote)
+        assertEquals("👍", emoji)
     }
 }
