@@ -86,7 +86,7 @@ class AppGraph(private val context: Context) {
 
     val sendMessage = SendMessage(
         identities, contacts, conversations, messages, outbox, channels,
-        ackTracker, pathCache, crypto,
+        ackTracker, pathCache, tagCache, crypto,
         airtimeEstimator = object : app.meshpigeon.domain.AirtimeEstimator {
             override fun estimate(packetLen: Int): Double =
                 app.meshpigeon.protocol.Airtime.estimateMs(packetLen, sf = 9, bandwidthKhz = 125.0, codingRateDenominator = 5)

@@ -478,7 +478,7 @@ fun MessageBubble(
             title = { Text("React") },
             text = {
                 Row(horizontalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.md)) {
-                    REACTION_EMOJIS.forEach { emoji ->
+                    app.meshpigeon.protocol.Reactions.EMOJIS.forEach { emoji ->
                         TextButton(onClick = {
                             emojiOpen = false
                             onReact(message, emoji)
@@ -492,9 +492,6 @@ fun MessageBubble(
         )
     }
 }
-
-/** The reaction row (07 §4): five fixed emojis, encoded via GRP_DATA. */
-private val REACTION_EMOJIS = listOf("👍", "❤️", "😂", "😮", "😢")
 
 /** Compact status line; long-press → Message details shows everything (07 §4). */
 private fun subInfo(message: app.meshpigeon.domain.Message): String {

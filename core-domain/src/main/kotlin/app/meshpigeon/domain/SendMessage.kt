@@ -9,6 +9,7 @@ import app.meshpigeon.protocol.IdentityKeyPair
 import app.meshpigeon.protocol.Messages
 import app.meshpigeon.protocol.MeshCrypto
 import app.meshpigeon.protocol.PacketCodec
+import app.meshpigeon.protocol.Reactions
 import kotlinx.coroutines.flow.first
 
 /**
@@ -25,6 +26,7 @@ class SendMessage(
     private val channels: ChannelRepository,
     private val ackTracker: AckTracker,
     private val pathCache: PathCache2,
+    private val tagCache: PacketTagCache,
     private val crypto: MeshCrypto,
     private val airtimeEstimator: AirtimeEstimator,
     private val wallClockSec: () -> Long,
@@ -176,19 +178,26 @@ class SendMessage(
     }
 
     /**
-     * Queue a targeted reaction (GRP_DATA, 03 §6): fire-once, no ACKs, no
-     * retry schedule — best-effort by design. Reacting to a DM is not
-     * supported (reactions ride channel GRP_DATA only).
+     * Queue a targeted reaction (03 §6, 07 §4): an ordinary GRP_TXT quoting
+     * the target message with the emoji appended — every client on the mesh
+     * sees a readable message; MeshPigeon peers attach it to the target.
+     * Fire-once, no ACKs, no retry schedule — best-effort by design.
+     * Reacting to a DM is not supported (channel conversations only).
      */
     suspend fun queueReaction(channel: Channel, conversationId: Long, target: Message, emoji: String): Long {
         val identity = identities.active().first() ?: error("no active identity")
-        val targetTag = target.packetTag ?: error("target message has no packet tag")
-        val raw = Messages.buildReaction(
+        require(Reactions.EMOJIS.contains(emoji)) { "unsupported reaction emoji" }
+        val targetSender = target.senderName ?: identity.name // reacting to our own message
+        val budget = AckTracker.textBudget(isGroup = true, senderPrefixLen = identity.name.length)
+        val text = Reactions.encode(targetSender, target.body, emoji, budget)
+        val timestamp = wallClockSec().coerceAtMost(Int.MAX_VALUE.toLong())
+        val raw = Messages.buildGroupMessage(
             Channels.Channel(channel.name, channel.keyEnc),
-            targetTag,
-            identity.name,
-            emoji,
+            timestamp,
+            "${identity.name}: $text",
         )
+        // the radio's store replays our own TX on the next sync — pre-drop it
+        tagCache.remember(PacketCodec.packetTag(raw))
         val msgId = messages.insert(
             Message(
                 id = 0,
@@ -200,6 +209,7 @@ class SendMessage(
                 out = true,
                 state = DeliveryState.QUEUED,
                 replyToId = target.id,
+                packetTag = PacketCodec.packetTag(raw),
             ),
         )
         outbox.enqueue(

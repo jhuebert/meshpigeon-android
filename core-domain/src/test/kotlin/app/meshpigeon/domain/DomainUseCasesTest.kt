@@ -11,6 +11,7 @@ import app.meshpigeon.protocol.PacketCodec
 import app.meshpigeon.protocol.PacketSpec
 import app.meshpigeon.protocol.Path
 import app.meshpigeon.protocol.PathHashSize
+import app.meshpigeon.protocol.TxtMsgPayload
 import app.meshpigeon.transport.FakeRadioAdapter
 import app.meshpigeon.transport.RadioSession
 import kotlinx.coroutines.flow.first
@@ -88,7 +89,7 @@ class DomainUseCasesTest {
         )
         val send = SendMessage(
             identities, contacts, conversations, messages, outbox,
-            channels, ackTracker, pathCache, crypto,
+            channels, ackTracker, pathCache, tagCache, crypto,
             airtimeEstimator = object : AirtimeEstimator {
                 override fun estimate(packetLen: Int) = 100.0
             },
@@ -115,7 +116,7 @@ class DomainUseCasesTest {
         contacts.upsert(Contact(0, identity.id, peer.publicKey, "bob", 0))
         val send = SendMessage(
             identities, contacts, conversations, messages, outbox,
-            channels, ackTracker, pathCache, crypto,
+            channels, ackTracker, pathCache, tagCache, crypto,
             airtimeEstimator = object : AirtimeEstimator {
                 override fun estimate(packetLen: Int) = 100.0
             },
@@ -550,7 +551,7 @@ class DomainUseCasesTest {
     }
 
     @Test
-    fun `reaction queues GRP_DATA and lands attached to its target`() = runTest {
+    fun `reaction sends as a quoted text message every client can read`() = runTest {
         val identity = me()
         val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
         val channel = channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
@@ -558,28 +559,73 @@ class DomainUseCasesTest {
         val send = newSendMessage()
         send.queueGroup(channel, "summit by noon")
         val target = messages.store.value.single()
-        assertEquals(4, target.packetTag!!.size) // outgoing rows carry the tag peers react to
 
         send.queueReaction(channel, target.conversationId, target, "👍")
-        val reactionEntry = outbox.store.value.last()
-        val reactionPacket = PacketCodec.decode(reactionEntry.packet)!!
-        assertEquals(PacketSpec.PAYLOAD_GRP_DATA, reactionPacket.payloadType)
-        assertNull(reactionEntry.ackKey) // fire-once: no ACK, no retry
+        val ownReaction = messages.store.value.last { it.kind == MessageKind.REACTION && it.out }
+        assertEquals(target.id, ownReaction.replyToId)
+        val entry = outbox.store.value.last()
+        assertNull(entry.ackKey) // fire-once: no ACK, no retry
 
-        // a peer hears our reaction packet → it attaches to the same message
-        pipeline.onPacket(reactionEntry.packet, wallClock = clockNow)
-        val reaction = messages.store.value.last { it.kind == MessageKind.REACTION }
-        assertEquals("👍", reaction.body)
-        assertEquals("mia", reaction.senderName)
-        assertEquals(target.id, reaction.replyToId)
+        // the on-air packet is a plain GRP_TXT quoting the target message
+        val packet = PacketCodec.decode(entry.packet)!!
+        assertEquals(PacketSpec.PAYLOAD_GRP_TXT, packet.payloadType)
+        val framed = packet.payload.copyOfRange(1, packet.payload.size)
+        val plain = ch.macThenDecrypt(crypto, framed)!!
+        val text = TxtMsgPayload.nulTerminated(plain, 5)
+        assertEquals("mia: @[mia] summit by noon 👍", text)
     }
 
     @Test
-    fun `reaction with an unknown target still surfaces`() = runTest {
+    fun `received quoted reaction attaches to its target`() = runTest {
+        val identity = me()
+        val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
+        val channel = channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
+            .let { channels.byId(it)!! }
+        val send = newSendMessage()
+        send.queueGroup(channel, "I had a really good time at the fair this evening")
+        val target = messages.store.value.single()
+
+        // a peer reacts with the same quoted-text convention
+        pipeline.onPacket(
+            Messages.buildGroupMessage(
+                ch, 1_700_000_002L,
+                "li: @[mia] I had a really good time at the fair this evening ❤️",
+            ),
+            wallClock = clockNow,
+        )
+        val reaction = messages.store.value.last { it.kind == MessageKind.REACTION }
+        assertEquals("❤️", reaction.body)
+        assertEquals("li", reaction.senderName)
+        assertEquals(target.id, reaction.replyToId)
+        // reactions stay calm: no unread bump, no notification
+        assertEquals(0, conversations.store.value.single().unreadCount)
+        assertTrue(notifications.isEmpty())
+    }
+
+    @Test
+    fun `reaction with no matching target lands as a normal message`() = runTest {
         val identity = me()
         val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
         channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
-        // nobody sent anything: the reaction's target tag matches nothing
+        // nobody sent "wrong quote" — the reaction text cannot attach
+        pipeline.onPacket(
+            Messages.buildGroupMessage(
+                ch, 1_700_000_003L,
+                "li: @[mia] wrong quote 👍",
+            ),
+            wallClock = clockNow,
+        )
+        val msg = messages.store.value.single()
+        assertEquals(MessageKind.TEXT, msg.kind)
+        assertEquals("@[mia] wrong quote 👍", msg.body)
+    }
+
+    @Test
+    fun `legacy GRP_DATA reaction still surfaces`() = runTest {
+        val identity = me()
+        val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
+        channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
+        // nobody sent anything: the legacy reaction's target tag matches nothing
         pipeline.onPacket(
             Messages.buildReaction(ch, byteArrayOf(1, 2, 3, 4), "li", "❤️"),
             wallClock = clockNow,
@@ -636,7 +682,7 @@ class DomainUseCasesTest {
 
     private fun newSendMessage() = SendMessage(
         identities, contacts, conversations, messages, outbox,
-        channels, ackTracker, pathCache, crypto,
+        channels, ackTracker, pathCache, tagCache, crypto,
         airtimeEstimator = object : AirtimeEstimator {
             override fun estimate(packetLen: Int) = 100.0
         },

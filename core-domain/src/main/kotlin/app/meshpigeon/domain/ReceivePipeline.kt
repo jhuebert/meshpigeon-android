@@ -17,6 +17,7 @@ import app.meshpigeon.protocol.PacketCodec
 import app.meshpigeon.protocol.PacketSpec
 import app.meshpigeon.protocol.RawPacket
 import app.meshpigeon.protocol.ReactionData
+import app.meshpigeon.protocol.Reactions
 import app.meshpigeon.protocol.TxtMsgPayload
 import kotlinx.coroutines.flow.first
 
@@ -173,6 +174,33 @@ class ReceivePipeline(
             if (channel.kind == ChannelKind.PUBLIC) ConversationKind.PUBLIC else ConversationKind.GROUP,
             channel.id,
         )
+        val body = bodyOf(text)
+        // Reactions ride as ordinary GRP_TXT quoting the target (03 §6):
+        // "@[<sender>] <quoted text> <emoji>" — attach when the target is
+        // found; otherwise fall back to a normal message so nothing is lost.
+        val reaction = Reactions.parse(body)
+        if (reaction != null) {
+            val (targetName, quote, emoji) = reaction
+            val target = findReactTarget(identity, convId, targetName, quote)
+            if (target != null) {
+                messages.insert(
+                    Message(
+                        id = 0,
+                        conversationId = convId,
+                        identityId = identity.id,
+                        senderName = senderName,
+                        body = emoji,
+                        kind = MessageKind.REACTION,
+                        sentAt = if (ts in 1_000_000_000..4_000_000_000L) ts * 1000 else recvAt,
+                        out = false,
+                        replyToId = target.id,
+                        packetTag = PacketCodec.packetTag(PacketCodec.encode(packet)),
+                    ),
+                )
+                return
+            }
+            // no target: keep reading as a normal message below
+        }
         conversations.bumpUnread(convId, 1)
         messages.insert(
             Message(
@@ -180,7 +208,7 @@ class ReceivePipeline(
                 conversationId = convId,
                 identityId = identity.id,
                 senderName = senderName,
-                body = bodyOf(text),
+                body = body,
                 // group ts is unix seconds; guard nonsense values
                 sentAt = if (ts in 1_000_000_000..4_000_000_000L) ts * 1000 else recvAt,
                 out = false,
@@ -199,6 +227,29 @@ class ReceivePipeline(
         ) {
             notifier.notify(Notification(convId, channel.name, bodyOf(text), isRequest = false))
         }
+    }
+
+    /**
+     * Newest-first scan for a reaction target (03 §6): a message by
+     * `<targetName>` whose body starts with the quoted text (the quote may
+     * have been truncated with an ellipsis). Our own outgoing rows have no
+     * sender name — they match on the identity name.
+     */
+    private suspend fun findReactTarget(
+        identity: Identity,
+        conversationId: Long,
+        targetName: String,
+        quote: String,
+    ): Message? {
+        val q = quote.trimEnd().removeSuffix("…")
+        if (q.isEmpty()) return null
+        for (msg in messages.observe(conversationId).first().reversed()) {
+            if (msg.kind == MessageKind.REACTION) continue
+            val senderMatches = msg.senderName?.equals(targetName, ignoreCase = true)
+                ?: (msg.out && identity.name.equals(targetName, ignoreCase = true))
+            if (senderMatches && msg.body.trimEnd().startsWith(q)) return msg
+        }
+        return null
     }
 
     private suspend fun onGroupData(identity: Identity, packet: RawPacket, recvAt: Long) {
