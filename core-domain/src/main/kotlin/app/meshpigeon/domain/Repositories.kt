@@ -21,11 +21,16 @@ interface ContactRepository {
     fun observe(identityId: Long): Flow<List<Contact>>
     fun observeBlocked(identityId: Long): Flow<List<Contact>>
     fun observePending(identityId: Long): Flow<List<Contact>>
+    suspend fun byId(id: Long): Contact?
     suspend fun byPublicKey(identityId: Long, publicKey: ByteArray): Contact?
     suspend fun upsert(contact: Contact): Long
     suspend fun block(id: Long)
     suspend fun unblock(id: Long)
     suspend fun rename(id: Long, name: String)
+    /** Tap-to-add from the pending/discovered list (07 §5). */
+    suspend fun setAccepted(id: Long, accepted: Boolean)
+    /** Remove a pending contact locally (ignore). */
+    suspend fun delete(id: Long)
     suspend fun clearPending(identityId: Long)
 }
 
@@ -39,6 +44,7 @@ interface ChannelRepository {
 interface ConversationRepository {
     fun observeAll(identityId: Long): Flow<List<Conversation>>
     fun observe(conversationId: Long): Flow<Conversation?>
+    suspend fun byId(conversationId: Long): Conversation?
     suspend fun byKind(identityId: Long, kind: ConversationKind): Conversation?
     suspend fun ensure(identityId: Long, kind: ConversationKind, refId: Long?): Long
     suspend fun update(conversation: Conversation)
@@ -52,6 +58,8 @@ interface MessageRepository {
     /** The newest message per conversation (chat-list snippets, 07 §3). */
     fun observeLastPerConversation(identityId: Long): Flow<List<Message>>
     suspend fun insert(message: Message): Long
+    suspend fun update(message: Message)
+    suspend fun byId(messageId: Long): Message?
     suspend fun updateState(id: Long, state: DeliveryState, rttMs: Long? = null)
     suspend fun byAckKey(identityId: Long, ackKey: ByteArray): Message?
     suspend fun markUnreadFrom(conversationId: Long, messageId: Long)

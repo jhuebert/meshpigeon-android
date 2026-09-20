@@ -22,6 +22,7 @@ class SendMessage(
     private val conversations: ConversationRepository,
     private val messages: MessageRepository,
     private val outbox: OutboxRepository,
+    private val channels: ChannelRepository,
     private val ackTracker: AckTracker,
     private val pathCache: PathCache2,
     private val crypto: MeshCrypto,
@@ -38,37 +39,58 @@ class SendMessage(
         val contact = contacts.byPublicKey(identity.id, peerPublicKey)
             ?: error("unknown contact")
         val convId = conversations.ensure(identity.id, ConversationKind.DM, contact.id)
+        return enqueueDirect(identity, contact, convId, text, replyToId)
+    }
 
+    private suspend fun enqueueDirect(
+        identity: Identity,
+        contact: Contact,
+        convId: Long,
+        text: String,
+        replyToId: Long? = null,
+        retryOf: Long? = null, // update this message row instead of inserting
+    ): Long {
         val budget = AckTracker.textBudget(isGroup = false)
         require(text.toByteArray(Charsets.UTF_8).size <= budget) {
             "message exceeds protocol budget ($budget bytes)"
         }
 
         val timestamp = wallClockSec().coerceAtMost(Int.MAX_VALUE.toLong())
-        val route = pathCache.routeFor(peerPublicKey[0].toInt() and 0xFF)
+        val route = pathCache.routeFor(contact.publicKey[0].toInt() and 0xFF)
         val keypair = IdentityKeyPair(identity.publicKey, identity.privateKeyEnc)
         // One build serves both routes: the flood packet carries the expected
         // ACK; direct-routed just rewrites the header path.
-        val flood = Messages.buildDirectMessage(crypto, keypair, peerPublicKey, timestamp, text)
+        val flood = Messages.buildDirectMessage(crypto, keypair, contact.publicKey, timestamp, text)
         val built = if (route != null && route.hopCount > 0) {
             Messages.reRouteToDirect(flood.raw, route)
         } else {
             flood.raw
         }
 
-        val msgId = messages.insert(
-            Message(
-                id = 0,
-                conversationId = convId,
-                identityId = identity.id,
-                body = text,
-                sentAt = wallClockMs(),
-                out = true,
-                state = DeliveryState.QUEUED,
-                replyToId = replyToId,
-                ackKey = flood.expectedAck,
-            ),
-        )
+        val msgId = if (retryOf != null) {
+            messages.update(
+                (messages.byId(retryOf) ?: return 0).copy(
+                    state = DeliveryState.QUEUED,
+                    sentAt = wallClockMs(),
+                    ackKey = flood.expectedAck,
+                ),
+            )
+            retryOf
+        } else {
+            messages.insert(
+                Message(
+                    id = 0,
+                    conversationId = convId,
+                    identityId = identity.id,
+                    body = text,
+                    sentAt = wallClockMs(),
+                    out = true,
+                    state = DeliveryState.QUEUED,
+                    replyToId = replyToId,
+                    ackKey = flood.expectedAck,
+                ),
+            )
+        }
         outbox.enqueue(
             OutboxEntry(
                 id = 0,
@@ -90,7 +112,14 @@ class SendMessage(
     /** Queue an encrypted channel message (GRP_TXT, flood, no ACKs). */
     suspend fun queueGroup(channel: Channel, text: String): Long {
         val identity = identities.active().first() ?: error("no active identity")
-        val convId = conversations.ensure(identity.id, ConversationKind.GROUP, channel.id)
+        // The Public channel has its own PUBLIC-kind conversation (07 §6);
+        // don't fork a second row under GROUP for the same channel.
+        val kind = if (channel.kind == ChannelKind.PUBLIC) ConversationKind.PUBLIC else ConversationKind.GROUP
+        val convId = conversations.ensure(identity.id, kind, channel.id)
+        return enqueueGroup(identity, channel, convId, text)
+    }
+
+    private suspend fun enqueueGroup(identity: Identity, channel: Channel, convId: Long, text: String, retryOf: Long? = null): Long {
         val prefix = "${identity.name}: "
         val budget = AckTracker.textBudget(isGroup = true, senderPrefixLen = prefix.length)
         require(text.toByteArray(Charsets.UTF_8).size <= budget) {
@@ -102,17 +131,24 @@ class SendMessage(
             timestamp,
             prefix + text,
         )
-        val msgId = messages.insert(
-            Message(
-                id = 0,
-                conversationId = convId,
-                identityId = identity.id,
-                body = text,
-                sentAt = wallClockMs(),
-                out = true,
-                state = DeliveryState.QUEUED,
-            ),
-        )
+        val msgId = if (retryOf != null) {
+            messages.update(
+                (messages.byId(retryOf) ?: return 0).copy(state = DeliveryState.QUEUED, sentAt = wallClockMs()),
+            )
+            retryOf
+        } else {
+            messages.insert(
+                Message(
+                    id = 0,
+                    conversationId = convId,
+                    identityId = identity.id,
+                    body = text,
+                    sentAt = wallClockMs(),
+                    out = true,
+                    state = DeliveryState.QUEUED,
+                ),
+            )
+        }
         outbox.enqueue(
             OutboxEntry(
                 id = 0,
@@ -129,6 +165,30 @@ class SendMessage(
             ),
         )
         return msgId
+    }
+
+    /**
+     * Retry affordance (07 §4): a FAILED message re-enters the outbox.
+     * Rebuilds the packet with a fresh timestamp (the old one is gone from
+     * the outbox), so the expected ACK key changes with it.
+     */
+    suspend fun requeue(messageId: Long): Boolean {
+        val msg = messages.byId(messageId) ?: return false
+        if (!msg.out || msg.state != DeliveryState.FAILED) return false
+        val identity = identities.active().first() ?: return false
+        val conv = conversations.byId(msg.conversationId) ?: return false
+        when (conv.kind) {
+            ConversationKind.DM -> {
+                val contact = contacts.byId(conv.refId ?: return false) ?: return false
+                enqueueDirect(identity, contact, conv.id, msg.body, msg.replyToId, retryOf = msg.id)
+            }
+            ConversationKind.GROUP, ConversationKind.PUBLIC -> {
+                val channel = channels.byId(conv.refId ?: return false) ?: return false
+                enqueueGroup(identity, channel, conv.id, msg.body, retryOf = msg.id)
+            }
+            ConversationKind.TRACE_LOG -> return false
+        }
+        return true
     }
 }
 

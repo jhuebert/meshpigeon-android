@@ -38,8 +38,11 @@ data class Contact(
     val lastLatitude: Double? = null,
     val lastLongitude: Double? = null,
     val isRepeater: Boolean = false,
+    /** Promoted into People (07 §5); passively heard adverts stay pending. */
+    val accepted: Boolean = true,
 ) {
     val isBlocked: Boolean get() = blockedAt != null
+    val isPending: Boolean get() = source == ContactSource.ADVERT && !accepted
 }
 
 enum class ContactSource { ADVERT, QR, LINK, CLIPBOARD, MANUAL }
@@ -72,6 +75,8 @@ data class Conversation(
     val notifyMode: NotifyMode = NotifyMode.DEFAULT,
     val lastMessageAt: Long? = null,
     val markUnreadFromId: Long? = null,
+    /** DM request from a stranger (07 §5): accept/block, never auto-opened. */
+    val isRequest: Boolean = false,
 )
 
 enum class ConversationKind { DM, GROUP, PUBLIC, TRACE_LOG }

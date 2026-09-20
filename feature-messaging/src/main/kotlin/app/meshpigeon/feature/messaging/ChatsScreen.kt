@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
@@ -92,6 +93,7 @@ class ChatsViewModel(
         val snippet: String,
         val unread: Int,
         val avatarKey: ByteArray,
+        val isRequest: Boolean = false,
     )
 
     data class ChatsState(
@@ -120,7 +122,7 @@ class ChatsViewModel(
                     when (conv.kind) {
                         ConversationKind.DM -> {
                             val contact = contactList.firstOrNull { it.id == conv.refId }
-                            Row(conv, contact?.name ?: "Unknown", last?.body ?: "", conv.unreadCount, contact?.publicKey ?: ByteArray(3))
+                            Row(conv, contact?.name ?: "Unknown", last?.body ?: "", conv.unreadCount, contact?.publicKey ?: ByteArray(3), conv.isRequest)
                         }
                         ConversationKind.GROUP, ConversationKind.PUBLIC -> {
                             val channel = channelList.firstOrNull { it.id == conv.refId }
@@ -154,6 +156,7 @@ fun ChatsScreen(
     onOpenConversation: (Conversation) -> Unit,
     onStartChat: () -> Unit,
     onConnectRadio: () -> Unit,
+    onOpenDrawer: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var menuOpen by remember { mutableStateOf(false) }
@@ -162,6 +165,11 @@ fun ChatsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Chats") },
+                navigationIcon = {
+                    IconButton(onClick = onOpenDrawer, modifier = Modifier.semantics { contentDescription = "Open menu" }) {
+                        Icon(Icons.Filled.Menu, contentDescription = null)
+                    }
+                },
                 actions = {
                     IconButton(onClick = { /* search bar toggles below */ }) {
                         Icon(Icons.Filled.Search, contentDescription = "Search chats")
@@ -243,6 +251,7 @@ fun ChatsScreen(
                         snippet = row.snippet,
                         unread = row.unread,
                         avatarKey = row.avatarKey,
+                        isRequest = row.isRequest,
                         onClick = { onOpenConversation(row.conversation) },
                     )
                 }
@@ -258,6 +267,7 @@ fun ChatRow(
     snippet: String,
     unread: Int,
     avatarKey: ByteArray,
+    isRequest: Boolean = false,
     onClick: () -> Unit,
 ) {
     Surface(
@@ -273,7 +283,16 @@ fun ChatRow(
         ) {
             InitialAvatar(name = name, key = avatarKey)
             Column(modifier = Modifier.weight(1f)) {
-                Text(name, style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.sm)) {
+                    Text(name, style = MaterialTheme.typography.titleMedium)
+                    if (isRequest) {
+                        Text(
+                            "Request",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
+                }
                 Text(
                     snippet,
                     style = MaterialTheme.typography.bodyMedium,

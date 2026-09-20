@@ -12,6 +12,7 @@ import app.meshpigeon.data.RoomMessageRepository
 import app.meshpigeon.data.RoomOutboxRepository
 import app.meshpigeon.data.RoomRadioTargetRepository
 import app.meshpigeon.domain.InMemoryPathCache
+import app.meshpigeon.domain.CreateIdentity
 import app.meshpigeon.domain.FlushOutbox
 import app.meshpigeon.domain.ReceivePipeline
 import app.meshpigeon.domain.SendMessage
@@ -45,12 +46,14 @@ class MeshPigeonApp : Application() {
     }
 }
 
-class AppGraph(context: Context) {
+class AppGraph(private val context: Context) {
+    val appContext: Context = context.applicationContext
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val crypto: MeshCrypto = BouncyMeshCrypto()
 
     val db: MeshPigeonDatabase = Room.databaseBuilder(context, MeshPigeonDatabase::class.java, MeshPigeonDatabase.NAME)
-        // v1→v2 added the outbox→message link; pre-release installs rebuild.
+        // v2→v3 added contact.accepted + conversation.is_request; pre-release
+        // installs rebuild rather than migrate.
         .fallbackToDestructiveMigration(dropAllTables = false)
         .build()
 
@@ -80,7 +83,7 @@ class AppGraph(context: Context) {
     val syncRadioHistory = SyncRadioHistory(identities, tagCache, receivePipeline)
 
     val sendMessage = SendMessage(
-        identities, contacts, conversations, messages, outbox,
+        identities, contacts, conversations, messages, outbox, channels,
         ackTracker, pathCache, crypto,
         airtimeEstimator = object : app.meshpigeon.domain.AirtimeEstimator {
             override fun estimate(packetLen: Int): Double =
@@ -91,6 +94,7 @@ class AppGraph(context: Context) {
     )
 
     val connectToRadio = app.meshpigeon.domain.ConnectToRadio(radioTargets)
+    val createIdentity = CreateIdentity(identities, channels, conversations, crypto)
     val settingsGuard = app.meshpigeon.domain.RadioSettingsGuard()
     val flushOutbox = FlushOutbox(outbox, messages, ackTracker, { System.currentTimeMillis() })
 

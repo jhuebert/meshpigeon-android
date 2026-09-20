@@ -49,7 +49,9 @@ object RadioNotifications {
         val (title, body) = if (batch.size > 1 || batch.values.sum() > 1) {
             "${batch.values.sum()} new messages" to batch.entries.joinToString { "${it.key} ×${it.value}" }
         } else {
-            notification.title to notification.body
+            // message requests are labeled so strangers never look like friends
+            val shownTitle = if (notification.isRequest) "Request · ${notification.title}" else notification.title
+            shownTitle to notification.body
         }
         batch.clear()
         // tap navigates directly to the conversation (never to the app root)

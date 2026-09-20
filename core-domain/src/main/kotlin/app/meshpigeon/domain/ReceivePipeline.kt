@@ -104,7 +104,12 @@ class ReceivePipeline(
 
         val convId = conversations.ensure(identity.id, ConversationKind.DM, sender.id)
         // Unknown-sender DMs become request conversations (07 §5): never
-        // silently dropped, never auto-opened — handled by the UI listing.
+        // silently dropped, never auto-opened — accepted from the banner.
+        val conv = conversations.byId(convId)
+        val isRequest = !sender.accepted
+        if (conv != null && conv.isRequest != isRequest) {
+            conversations.update(conv.copy(isRequest = isRequest))
+        }
         conversations.bumpUnread(convId, 1)
         messages.insert(
             Message(
@@ -129,7 +134,13 @@ class ReceivePipeline(
                 sender.publicKey,
             ),
         )
-        notifier.notify(Notification(convId, sender.name, decoded.text, isRequest = false))
+        if (NotificationPolicy.shouldNotify(
+                NotificationPolicy.effectiveMode(conv, null),
+                isDirect = true, body = decoded.text, myName = identity.name,
+            )
+        ) {
+            notifier.notify(Notification(convId, sender.name, decoded.text, isRequest = isRequest))
+        }
     }
 
     private suspend fun onGroupTxt(
@@ -148,6 +159,12 @@ class ReceivePipeline(
 
         val ts = Crypto.leU32At(plain, 0)
         val text = TxtMsgPayload.nulTerminated(plain, 5) // "name: text"
+        // Blocked senders never render in groups either (07 §7); group
+        // traffic carries only the display name, so match by name.
+        val senderName = senderNameOf(text)
+        if (contacts.observeBlocked(identity.id).first().any { it.name.equals(senderName, ignoreCase = true) }) {
+            return
+        }
         // The Public channel is a first-class conversation (07 §6); other
         // channels get GROUP conversations.
         val convId = conversations.ensure(
@@ -161,7 +178,7 @@ class ReceivePipeline(
                 id = 0,
                 conversationId = convId,
                 identityId = identity.id,
-                senderName = senderNameOf(text),
+                senderName = senderName,
                 body = bodyOf(text),
                 // group ts is unix seconds; guard nonsense values
                 sentAt = if (ts in 1_000_000_000..4_000_000_000L) ts * 1000 else recvAt,
@@ -172,7 +189,15 @@ class ReceivePipeline(
                 packetTag = PacketCodec.packetTag(PacketCodec.encode(packet)),
             ),
         )
-        notifier.notify(Notification(convId, channel.name, bodyOf(text), isRequest = false))
+        val conv = conversations.byId(convId)
+        // Calm mesh default (07 §8): channels notify only on mentions.
+        if (NotificationPolicy.shouldNotify(
+                NotificationPolicy.effectiveMode(conv, channel),
+                isDirect = false, body = bodyOf(text), myName = identity.name,
+            )
+        ) {
+            notifier.notify(Notification(convId, channel.name, bodyOf(text), isRequest = false))
+        }
     }
 
     private suspend fun onGroupData(identity: Identity, packet: RawPacket) {
@@ -253,6 +278,7 @@ class ReceivePipeline(
                     lastLatitude = app.latitude,
                     lastLongitude = app.longitude,
                     isRepeater = isRepeater,
+                    accepted = false, // pending until the user adds them (07 §5)
                 ),
             )
             notifier.notify(

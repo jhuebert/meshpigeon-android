@@ -40,7 +40,9 @@ class FakeContactRepository : ContactRepository {
         store.map { list -> list.filter { it.identityId == identityId && it.isBlocked } }
 
     override fun observePending(identityId: Long): Flow<List<Contact>> =
-        store.map { list -> list.filter { it.identityId == identityId && it.source == ContactSource.ADVERT } }
+        store.map { list -> list.filter { it.identityId == identityId && it.isPending && !it.isBlocked } }
+
+    override suspend fun byId(id: Long): Contact? = store.value.firstOrNull { it.id == id }
 
     override suspend fun byPublicKey(identityId: Long, publicKey: ByteArray): Contact? =
         store.value.firstOrNull { it.identityId == identityId && it.publicKey.contentEquals(publicKey) }
@@ -65,7 +67,15 @@ class FakeContactRepository : ContactRepository {
     }
 
     override suspend fun clearPending(identityId: Long) {
-        store.value = store.value.filterNot { it.identityId == identityId && it.source == ContactSource.ADVERT && !it.isBlocked }
+        store.value = store.value.filterNot { it.identityId == identityId && it.isPending && !it.isBlocked }
+    }
+
+    override suspend fun setAccepted(id: Long, accepted: Boolean) {
+        store.value = store.value.map { if (it.id == id) it.copy(accepted = accepted) else it }
+    }
+
+    override suspend fun delete(id: Long) {
+        store.value = store.value.filterNot { it.id == id }
     }
 }
 
@@ -101,6 +111,9 @@ class FakeConversationRepository : ConversationRepository {
 
     override suspend fun byKind(identityId: Long, kind: ConversationKind): Conversation? =
         store.value.firstOrNull { it.identityId == identityId && it.kind == kind }
+
+    override suspend fun byId(conversationId: Long): Conversation? =
+        store.value.firstOrNull { it.id == conversationId }
 
     override suspend fun ensure(identityId: Long, kind: ConversationKind, refId: Long?): Long {
         val existing = store.value.firstOrNull { it.identityId == identityId && it.kind == kind && it.refId == refId }
@@ -145,6 +158,13 @@ class FakeMessageRepository : MessageRepository {
         store.value = store.value + message.copy(id = id)
         return id
     }
+
+    override suspend fun update(message: Message) {
+        store.value = store.value.map { if (it.id == message.id) message else it }
+    }
+
+    override suspend fun byId(messageId: Long): Message? =
+        store.value.firstOrNull { it.id == messageId }
 
     override suspend fun updateState(id: Long, state: DeliveryState, rttMs: Long?) {
         store.value = store.value.map { if (it.id == id) it.copy(state = state, rttMs = rttMs ?: it.rttMs) else it }

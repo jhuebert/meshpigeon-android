@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,7 +72,7 @@ class ConversationViewModel(
     identities: IdentityRepository,
     private val conversations: ConversationRepository,
     messages: MessageRepository,
-    contacts: ContactRepository,
+    private val contacts: ContactRepository,
     channels: ChannelRepository,
     private val sendMessage: SendMessage,
     conversationId: Long,
@@ -80,6 +81,7 @@ class ConversationViewModel(
         val title: String = "",
         val messages: List<app.meshpigeon.domain.Message> = emptyList(),
         val isDirect: Boolean = true,
+        val isRequest: Boolean = false,
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -115,6 +117,7 @@ class ConversationViewModel(
                             },
                             messages = msgs,
                             isDirect = conv.kind == ConversationKind.DM,
+                            isRequest = conv.isRequest,
                         )
                     }
                 }
@@ -127,12 +130,40 @@ class ConversationViewModel(
         viewModelScope.launch {
             val conv = conversation ?: return@launch
             when (conv.kind) {
-                ConversationKind.DM -> peer?.let { sendMessage.queueDirect(it.publicKey, text) }
+                ConversationKind.DM -> peer?.let {
+                    // replying to a request accepts the sender (07 §5)
+                    if (conv.isRequest) acceptRequest()
+                    sendMessage.queueDirect(it.publicKey, text)
+                }
                 ConversationKind.GROUP, ConversationKind.PUBLIC ->
                     channel?.let { sendMessage.queueGroup(it, text) }
                 ConversationKind.TRACE_LOG -> Unit
             }
         }
+    }
+
+    /** Accept a message request: conversation + contact become normal. */
+    fun acceptRequest() {
+        viewModelScope.launch {
+            conversation?.let { conv ->
+                if (conv.isRequest) {
+                    conversations.update(conv.copy(isRequest = false))
+                    peer?.let { contacts.setAccepted(it.id, true) }
+                }
+            }
+        }
+    }
+
+    /** Block the sender of a message request (07 §7). */
+    fun blockRequest() {
+        viewModelScope.launch {
+            peer?.let { contacts.block(it.id) }
+        }
+    }
+
+    /** Retry affordance (07 §4): re-enqueue a FAILED message. */
+    fun retry(messageId: Long) {
+        viewModelScope.launch { sendMessage.requeue(messageId) }
     }
 }
 
@@ -146,7 +177,6 @@ class ConversationViewModel(
 fun ConversationScreen(
     viewModel: ConversationViewModel,
     onBack: () -> Unit,
-    onRetry: (Long) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val title = state.title
@@ -164,17 +194,34 @@ fun ConversationScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(title) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-            )
+            Column {
+                TopAppBar(
+                    title = { Text(title) },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                )
+                if (state.isRequest) {
+                    RequestBanner(
+                        name = title,
+                        onAccept = viewModel::acceptRequest,
+                        onBlock = viewModel::blockRequest,
+                    )
+                }
+            }
         },
         bottomBar = {
             Column(modifier = Modifier.imePadding()) {
+                if (state.isRequest) {
+                    Text(
+                        "Accept the request to reply to $title.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = MeshPigeonSpacing.md),
+                    )
+                }
                 if (draftBytes > budget) {
                     Text(
                         "Too long for one hop ($draftBytes/$budget). Split it up.",
@@ -195,6 +242,7 @@ fun ConversationScreen(
                         onValueChange = { draft = it },
                         modifier = Modifier.weight(1f),
                         placeholder = { Text("Message") },
+                        enabled = !state.isRequest,
                         supportingText = {
                             Text(
                                 "$draftBytes / $budget",
@@ -214,7 +262,7 @@ fun ConversationScreen(
                                 draft = ""
                             }
                         },
-                        enabled = draft.isNotBlank() && draftBytes <= budget,
+                        enabled = draft.isNotBlank() && draftBytes <= budget && !state.isRequest,
                         modifier = Modifier.semantics { contentDescription = "Send message" },
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
@@ -249,10 +297,37 @@ fun ConversationScreen(
                 items(messages, key = { it.id }) { message ->
                     MessageBubble(
                         message = message,
-                        onRetry = onRetry,
+                        onRetry = { viewModel.retry(message.id) },
                     )
                 }
             }
+        }
+    }
+}
+
+/** Accept/block banner on a message-request conversation (07 §5). */
+@Composable
+private fun RequestBanner(name: String, onAccept: () -> Unit, onBlock: () -> Unit) {
+    androidx.compose.material3.Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = MeshPigeonSpacing.md),
+    ) {
+        Row(
+            modifier = Modifier.padding(MeshPigeonSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MeshPigeonSpacing.sm),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Message request", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "$name is not in your contacts yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = onBlock) { Text("Block") }
+            Button(onClick = onAccept) { Text("Accept") }
         }
     }
 }

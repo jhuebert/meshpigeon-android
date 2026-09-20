@@ -87,7 +87,7 @@ class DomainUseCasesTest {
         )
         val send = SendMessage(
             identities, contacts, conversations, messages, outbox,
-            ackTracker, pathCache, crypto,
+            channels, ackTracker, pathCache, crypto,
             airtimeEstimator = object : AirtimeEstimator {
                 override fun estimate(packetLen: Int) = 100.0
             },
@@ -114,7 +114,7 @@ class DomainUseCasesTest {
         contacts.upsert(Contact(0, identity.id, peer.publicKey, "bob", 0))
         val send = SendMessage(
             identities, contacts, conversations, messages, outbox,
-            ackTracker, pathCache, crypto,
+            channels, ackTracker, pathCache, crypto,
             airtimeEstimator = object : AirtimeEstimator {
                 override fun estimate(packetLen: Int) = 100.0
             },
@@ -443,9 +443,118 @@ class DomainUseCasesTest {
         assertEquals(1, flush.tick().size)
     }
 
+    @Test
+    fun `dm from a stranger opens as a request conversation`() = runTest {
+        val identity = me()
+        val stranger = crypto.newIdentity()
+        // stranger heard via advert: pending, never accepted
+        contacts.upsert(Contact(0, identity.id, stranger.publicKey, "riley", 0, accepted = false))
+        pipeline.onPacket(
+            Messages.buildDirectMessage(crypto, stranger, identity.publicKey, 1_700_000_006L, "hi there").raw,
+            wallClock = clockNow,
+        )
+        val conv = conversations.store.value.single()
+        assertTrue(conv.isRequest)
+        assertEquals(ConversationKind.DM, conv.kind)
+        assertEquals(1, notifications.size)
+        assertTrue(notifications.single().isRequest)
+
+        // once accepted, later dms land in the normal conversation
+        contacts.setAccepted(contacts.store.value.single().id, true)
+        pipeline.onPacket(
+            Messages.buildDirectMessage(crypto, stranger, identity.publicKey, 1_700_000_007L, "again").raw,
+            wallClock = clockNow + 1,
+        )
+        assertTrue(!conversations.store.value.single().isRequest)
+        assertEquals(1, conversations.store.value.size)
+    }
+
+    @Test
+    fun `notification policy matrix is applied`() = runTest {
+        val identity = me()
+        suspend fun channel(name: String, mode: NotifyMode, kind: ChannelKind = ChannelKind.HASHTAG): Channel {
+            val ch = Channels.Channel(name, Channels.hashtagKey(name))
+            return Channel(0, identity.id, name, ch.secret, kind, 0, notifyMode = mode).also {
+                channels.upsert(it)
+            }
+        }
+
+        // default channel: only mentions notify
+        val hikers = channel("hikers", NotifyMode.DEFAULT)
+        pipeline.onPacket(Messages.buildGroupMessage(Channels.Channel("hikers", hikers.keyEnc), 1_700_000_008L, "li: nice day"), wallClock = clockNow)
+        assertEquals(0, notifications.size)
+        pipeline.onPacket(Messages.buildGroupMessage(Channels.Channel("hikers", hikers.keyEnc), 1_700_000_009L, "li: hey @mia look"), wallClock = clockNow)
+        assertEquals(1, notifications.size)
+
+        // muted channel: even a mention is silent
+        val silent = channel("silent", NotifyMode.MUTED).copy(muted = true)
+        channels.upsert(silent)
+        pipeline.onPacket(Messages.buildGroupMessage(Channels.Channel("silent", silent.keyEnc), 1_700_000_010L, "li: @mia"), wallClock = clockNow)
+        assertEquals(1, notifications.size)
+
+        // important-only: everything notifies
+        val firehose = channel("firehose", NotifyMode.IMPORTANT_ONLY)
+        pipeline.onPacket(Messages.buildGroupMessage(Channels.Channel("firehose", firehose.keyEnc), 1_700_000_011L, "li: chatter"), wallClock = clockNow)
+        assertEquals(2, notifications.size)
+    }
+
+    @Test
+    fun `group message from a blocked name never renders`() = runTest {
+        val identity = me()
+        val ch = Channels.Channel("hikers", Channels.hashtagKey("hikers"))
+        channels.upsert(Channel(0, identity.id, ch.name, ch.secret, ChannelKind.HASHTAG, 0))
+        contacts.upsert(Contact(0, identity.id, crypto.newIdentity().publicKey, "spam", 0).let { it.copy(blockedAt = 1) })
+        pipeline.onPacket(Messages.buildGroupMessage(ch, 1_700_000_012L, "spam: buy stuff"), wallClock = clockNow)
+        assertEquals(0, messages.store.value.size)
+    }
+
+    @Test
+    fun `requeue rebuilds a failed dm and it confirms`() = runTest {
+        val identity = me()
+        val peer = crypto.newIdentity()
+        contacts.upsert(Contact(0, identity.id, peer.publicKey, "bob", firstSeenAt = 0))
+        val send = newSendMessage()
+        val msgId = send.queueDirect(peer.publicKey, "lost")
+
+        val flush = FlushOutbox(outbox, messages, ackTracker, { clockNow })
+        flush.resume()
+        assertEquals(1, flush.tick().size)
+        repeat(6) { clockNow += 60_000; flush.tick() } // exhaust retries → FAILED
+        assertEquals(DeliveryState.FAILED, messages.store.value.single().state)
+
+        assertTrue(send.requeue(msgId))
+        val entry = outbox.store.value.single()
+        assertEquals(DeliveryState.QUEUED, entry.state)
+        val msg = messages.store.value.single()
+        assertEquals(DeliveryState.QUEUED, msg.state)
+        assertTrue(msg.ackKey!!.contentEquals(entry.ackKey!!))
+        // new packet confirms like any other
+        flush.resume()
+        assertEquals(1, flush.tick().size)
+        val ack = outbox.store.value.single().ackKey!!
+        assertTrue(ackTracker.onAcked(ack))
+        flush.onConfirmed(ack)
+        assertEquals(DeliveryState.CONFIRMED, messages.store.value.single { it.id == msgId }.state)
+
+        // only failed messages can be requeued
+        assertTrue(!send.requeue(msgId))
+    }
+
+    @Test
+    fun `sending on public does not fork a second conversation`() = runTest {
+        val identity = me()
+        val pub = Channel(0, identity.id, Channels.PUBLIC_NAME, Channels.Channel.public().secret, ChannelKind.PUBLIC, 0)
+        channels.upsert(pub)
+        val publicConv = conversations.ensure(identity.id, ConversationKind.PUBLIC, pub.id)
+        newSendMessage().queueGroup(pub, "hi all")
+        assertEquals(1, conversations.store.value.size)
+        assertEquals(publicConv, conversations.store.value.single().id)
+        assertEquals(1, outbox.store.value.size)
+    }
+
     private fun newSendMessage() = SendMessage(
         identities, contacts, conversations, messages, outbox,
-        ackTracker, pathCache, crypto,
+        channels, ackTracker, pathCache, crypto,
         airtimeEstimator = object : AirtimeEstimator {
             override fun estimate(packetLen: Int) = 100.0
         },

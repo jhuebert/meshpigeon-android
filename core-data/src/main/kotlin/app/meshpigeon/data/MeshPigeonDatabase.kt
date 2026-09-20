@@ -67,6 +67,7 @@ data class ContactRow(
     val last_lat: Double?,
     val last_lon: Double?,
     val is_repeater: Boolean,
+    val accepted: Boolean,
 )
 
 @Entity(tableName = "channels")
@@ -93,6 +94,7 @@ data class ConversationRow(
     val muted: Boolean,
     val notify_mode: String,
     val last_message_at: Long?,
+    val is_request: Boolean,
 )
 
 @Entity(tableName = "messages")
@@ -177,8 +179,11 @@ interface ContactDao {
     @Query("SELECT * FROM contacts WHERE identity_id = :identityId AND blocked_at IS NOT NULL")
     fun observeBlocked(identityId: Long): Flow<List<ContactRow>>
 
-    @Query("SELECT * FROM contacts WHERE identity_id = :identityId AND source = 'ADVERT' AND blocked_at IS NULL")
+    @Query("SELECT * FROM contacts WHERE identity_id = :identityId AND source = 'ADVERT' AND accepted = 0 AND blocked_at IS NULL")
     fun observePending(identityId: Long): Flow<List<ContactRow>>
+
+    @Query("SELECT * FROM contacts WHERE id = :id")
+    suspend fun byId(id: Long): ContactRow?
 
     @Query("SELECT * FROM contacts WHERE identity_id = :identityId AND pubkey = :pubkey LIMIT 1")
     suspend fun byPubkey(identityId: Long, pubkey: ByteArray): ContactRow?
@@ -195,7 +200,13 @@ interface ContactDao {
     @Query("UPDATE contacts SET name = :name WHERE id = :id")
     suspend fun rename(id: Long, name: String)
 
-    @Query("DELETE FROM contacts WHERE identity_id = :identityId AND source = 'ADVERT' AND blocked_at IS NULL")
+    @Query("DELETE FROM contacts WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("UPDATE contacts SET accepted = :accepted WHERE id = :id")
+    suspend fun setAccepted(id: Long, accepted: Boolean)
+
+    @Query("DELETE FROM contacts WHERE identity_id = :identityId AND source = 'ADVERT' AND accepted = 0 AND blocked_at IS NULL")
     suspend fun clearPending(identityId: Long)
 }
 
@@ -221,6 +232,9 @@ interface ConversationDao {
 
     @Query("SELECT * FROM conversations WHERE id = :id")
     fun observe(id: Long): Flow<ConversationRow?>
+
+    @Query("SELECT * FROM conversations WHERE id = :id")
+    suspend fun byId(id: Long): ConversationRow?
 
     @Query("SELECT * FROM conversations WHERE identity_id = :identityId AND kind = :kind LIMIT 1")
     suspend fun byKind(identityId: Long, kind: String): ConversationRow?
@@ -254,6 +268,12 @@ interface MessageDao {
 
     @Insert
     suspend fun insert(row: MessageRow): Long
+
+    @Update
+    suspend fun update(row: MessageRow)
+
+    @Query("SELECT * FROM messages WHERE id = :id")
+    suspend fun byId(id: Long): MessageRow?
 
     @Query("UPDATE messages SET state = :state, rtt_ms = COALESCE(:rtt, rtt_ms) WHERE id = :id")
     suspend fun updateState(id: Long, state: String, rtt: Long?)
@@ -316,7 +336,7 @@ interface PacketTagDao {
         ConversationRow::class, MessageRow::class, OutboxRow::class,
         RadioTargetRow::class, PacketTagRow::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class MeshPigeonDatabase : RoomDatabase() {
@@ -349,12 +369,12 @@ internal fun Identity.toRow() = IdentityRow(
 internal fun ContactRow.toDomain() = Contact(
     id, identity_id, pubkey, name, first_seen_at, last_seen_at,
     ContactSource.valueOf(source), blocked_at, flags, note,
-    last_lat, last_lon, is_repeater,
+    last_lat, last_lon, is_repeater, accepted,
 )
 
 internal fun Contact.toRow() = ContactRow(
     id, identityId, publicKey, name, firstSeenAt, lastSeenAt,
-    source.name, blockedAt, flags, note, lastLatitude, lastLongitude, isRepeater,
+    source.name, blockedAt, flags, note, lastLatitude, lastLongitude, isRepeater, accepted,
 )
 
 internal fun ChannelRow.toDomain() = Channel(
@@ -369,10 +389,12 @@ internal fun Channel.toRow() = ChannelRow(
 internal fun ConversationRow.toDomain() = Conversation(
     id, identity_id, ConversationKind.valueOf(kind), ref_id,
     unread_count, pinned, muted, NotifyMode.valueOf(notify_mode), last_message_at,
+    markUnreadFromId = null, isRequest = is_request,
 )
 
 internal fun Conversation.toRow() = ConversationRow(
-    id, identityId, kind.name, refId, unreadCount, pinned, muted, notifyMode.name, lastMessageAt,
+    id, identityId, kind.name, refId, unreadCount, pinned, muted, notifyMode.name,
+    lastMessageAt, is_request = isRequest,
 )
 
 internal fun MessageRow.toDomain() = Message(
@@ -426,6 +448,8 @@ class RoomContactRepository(private val db: MeshPigeonDatabase) : ContactReposit
     override fun observePending(identityId: Long): Flow<List<Contact>> =
         db.contactDao().observePending(identityId).map { l -> l.map { it.toDomain() } }
 
+    override suspend fun byId(id: Long): Contact? = db.contactDao().byId(id)?.toDomain()
+
     override suspend fun byPublicKey(identityId: Long, publicKey: ByteArray): Contact? =
         db.contactDao().byPubkey(identityId, publicKey)?.toDomain()
 
@@ -433,6 +457,8 @@ class RoomContactRepository(private val db: MeshPigeonDatabase) : ContactReposit
     override suspend fun block(id: Long) = db.contactDao().block(id, System.currentTimeMillis())
     override suspend fun unblock(id: Long) = db.contactDao().unblock(id)
     override suspend fun rename(id: Long, name: String) = db.contactDao().rename(id, name)
+    override suspend fun setAccepted(id: Long, accepted: Boolean) = db.contactDao().setAccepted(id, accepted)
+    override suspend fun delete(id: Long) = db.contactDao().delete(id)
     override suspend fun clearPending(identityId: Long) = db.contactDao().clearPending(identityId)
 }
 
@@ -452,6 +478,9 @@ class RoomConversationRepository(private val db: MeshPigeonDatabase) : Conversat
     override fun observe(conversationId: Long): Flow<Conversation?> =
         db.conversationDao().observe(conversationId).map { it?.toDomain() }
 
+    override suspend fun byId(conversationId: Long): Conversation? =
+        db.conversationDao().byId(conversationId)?.toDomain()
+
     override suspend fun byKind(identityId: Long, kind: ConversationKind): Conversation? =
         db.conversationDao().byKind(identityId, kind.name)?.toDomain()
 
@@ -462,6 +491,7 @@ class RoomConversationRepository(private val db: MeshPigeonDatabase) : Conversat
                 identity_id = identityId, kind = kind.name, ref_id = refId,
                 unread_count = 0, pinned = false, muted = false,
                 notify_mode = NotifyMode.DEFAULT.name, last_message_at = null,
+                is_request = false,
             ),
         )
     }
@@ -482,6 +512,8 @@ class RoomMessageRepository(private val db: MeshPigeonDatabase) : MessageReposit
         db.messageDao().observeLastPerConversation(identityId).map { l -> l.map { it.toDomain() } }
 
     override suspend fun insert(message: Message): Long = db.messageDao().insert(message.toRow())
+    override suspend fun update(message: Message) = db.messageDao().update(message.toRow())
+    override suspend fun byId(messageId: Long): Message? = db.messageDao().byId(messageId)?.toDomain()
     override suspend fun updateState(id: Long, state: DeliveryState, rttMs: Long?) =
         db.messageDao().updateState(id, state.name, rttMs)
 

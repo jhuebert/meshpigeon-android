@@ -32,18 +32,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.meshpigeon.domain.AdvertPolicy
-import app.meshpigeon.domain.Channel
-import app.meshpigeon.domain.ChannelKind
 import app.meshpigeon.domain.ChannelRepository
-import app.meshpigeon.domain.ConversationKind
 import app.meshpigeon.domain.ConversationRepository
-import app.meshpigeon.domain.Identity
+import app.meshpigeon.domain.CreateIdentity
 import app.meshpigeon.domain.IdentityRepository
-import app.meshpigeon.protocol.Channels
-import app.meshpigeon.protocol.MeshCrypto
 import app.meshpigeon.domain.RadioPresets
 import app.meshpigeon.domain.RegionPreset
+import app.meshpigeon.protocol.MeshCrypto
 import app.meshpigeon.ui.MeshPigeonSpacing
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,34 +86,7 @@ class OnboardingViewModel(
 
     private suspend fun createProfile() {
         if (identities.active().first() != null) return // already set up
-        val now = System.currentTimeMillis()
-        val pair = crypto.newIdentity()
-        val id = identities.upsert(
-            Identity(
-                id = 0,
-                name = _state.value.name.ifBlank { "Pigeon" },
-                publicKey = pair.publicKey,
-                // keystore sealing lands with the M2 security pass; the
-                // column is already named _enc to keep the schema stable
-                privateKeyEnc = pair.privateKey,
-                flags = 0,
-                createdAt = now,
-                isActive = true,
-                advertPolicy = AdvertPolicy.MANUAL,
-            ),
-        )
-        identities.setActive(id)
-        val channelId = channels.upsert(
-            Channel(
-                id = 0,
-                identityId = id,
-                name = Channels.PUBLIC_NAME,
-                keyEnc = Channels.Channel.public().secret,
-                kind = ChannelKind.PUBLIC,
-                createdAt = now,
-            ),
-        )
-        conversations.ensure(id, ConversationKind.PUBLIC, channelId)
+        CreateIdentity(identities, channels, conversations, crypto).create(_state.value.name)
     }
 }
 
