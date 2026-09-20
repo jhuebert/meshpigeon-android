@@ -3,6 +3,7 @@ package app.meshpigeon.feature.contacts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,10 +11,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Tab
@@ -25,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +90,7 @@ class ContactsViewModel(
     fun remove(contact: Contact) = launch { contacts.delete(contact.id) }
     fun block(contact: Contact) = launch { contacts.block(contact.id) }
     fun unblock(contact: Contact) = launch { contacts.unblock(contact.id) }
+    fun rename(contact: Contact, name: String) = launch { contacts.rename(contact.id, name) }
 
     fun clearAllPending() {
         viewModelScope.launch {
@@ -98,19 +105,54 @@ class ContactsViewModel(
 
 /**
  * Contacts tab (07 §5/§7): people, discovered (pending) contacts, and the
- * reversible Blocked list. Repeaters get a read-only section later (07 §7).
+ * reversible Blocked list. Long-press opens the contact detail sheet (07 §7);
+ * overflow offers "Say hi nearby" (zero-hop advert, 07 §5). Repeaters get a
+ * read-only section later (07 §7).
  */
 @Composable
 fun ContactsScreen(
     viewModel: ContactsViewModel,
     onMessage: (Contact) -> Unit = {},
+    onSayHi: suspend () -> String? = { null },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var tab by remember { mutableIntStateOf(0) }
     var confirmClearAll by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<Contact?>(null) }
+    var overflowOpen by remember { mutableStateOf(false) }
+    var sayHiFeedback by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val tabs = listOf("People", "Discovered", "Blocked")
 
     Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
+        ) {
+            if (sayHiFeedback != null) {
+                Text(
+                    sayHiFeedback!!,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f).padding(horizontal = MeshPigeonSpacing.md),
+                )
+            }
+            Box {
+                IconButton(onClick = { overflowOpen = true }, modifier = Modifier.semantics { contentDescription = "Contacts options" }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = null)
+                }
+                DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Say hi nearby") },
+                        onClick = {
+                            overflowOpen = false
+                            scope.launch { sayHiFeedback = onSayHi() }
+                        },
+                    )
+                }
+            }
+        }
         TabRow(selectedTabIndex = tab) {
             tabs.forEachIndexed { i, label ->
                 Tab(selected = tab == i, onClick = { tab = i }, text = { Text(label) })
@@ -156,10 +198,7 @@ fun ContactsScreen(
                 items(shown, key = { it.id }) { contact ->
                     ContactRow(
                         contact = contact,
-                        onAccept = { viewModel.accept(contact) },
-                        onRemove = { viewModel.remove(contact) },
-                        onBlock = { viewModel.block(contact) },
-                        onUnblock = { viewModel.unblock(contact) },
+                        onOpenDetails = { selected = contact },
                         onMessage = { onMessage(contact) },
                     )
                 }
@@ -179,31 +218,40 @@ fun ContactsScreen(
             onDismiss = { confirmClearAll = false },
         )
     }
+
+    selected?.let { contact ->
+        ContactDetailSheet(
+            contact = contact,
+            onDismiss = { selected = null },
+            onMessage = { onMessage(contact) },
+            onRename = { viewModel.rename(contact, it) },
+            onBlock = { viewModel.block(contact) },
+            onUnblock = { viewModel.unblock(contact) },
+            onRemove = { viewModel.remove(contact) },
+            onAccept = { viewModel.accept(contact) },
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContactRow(
     contact: Contact,
-    onAccept: () -> Unit,
-    onRemove: () -> Unit,
-    onBlock: () -> Unit,
-    onUnblock: () -> Unit,
+    onOpenDetails: () -> Unit,
     onMessage: () -> Unit,
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
                 onClick = {
                     when {
-                        contact.isBlocked -> onUnblock()
-                        contact.isPending -> onAccept()
+                        contact.isBlocked -> onOpenDetails()
+                        contact.isPending -> onOpenDetails()
                         else -> onMessage()
                     }
                 },
-                onLongClick = { menuOpen = true },
+                onLongClick = onOpenDetails,
             ),
     ) {
         Row(
@@ -229,25 +277,14 @@ private fun ContactRow(
                 )
             }
             if (contact.isPending) {
-                Button(onClick = onAccept, modifier = Modifier.semantics { contentDescription = "Add ${contact.name}" }) {
+                Button(onClick = onOpenDetails, modifier = Modifier.semantics { contentDescription = "Add ${contact.name}" }) {
                     Text("Add")
                 }
             }
             if (contact.isBlocked) {
-                OutlinedButton(onClick = onUnblock, modifier = Modifier.semantics { contentDescription = "Unblock ${contact.name}" }) {
+                OutlinedButton(onClick = onOpenDetails, modifier = Modifier.semantics { contentDescription = "Unblock ${contact.name}" }) {
                     Text("Unblock")
                 }
-            }
-        }
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            if (!contact.isBlocked && !contact.isPending) {
-                DropdownMenuItem(text = { Text("Message") }, onClick = { menuOpen = false; onMessage() })
-                DropdownMenuItem(text = { Text("Block") }, onClick = { menuOpen = false; onBlock() })
-            } else if (contact.isPending) {
-                DropdownMenuItem(text = { Text("Block") }, onClick = { menuOpen = false; onBlock() })
-                DropdownMenuItem(text = { Text("Remove") }, onClick = { menuOpen = false; onRemove() })
-            } else {
-                DropdownMenuItem(text = { Text("Unblock") }, onClick = { menuOpen = false; onUnblock() })
             }
         }
     }

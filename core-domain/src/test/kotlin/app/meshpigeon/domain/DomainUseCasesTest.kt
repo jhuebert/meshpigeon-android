@@ -16,6 +16,7 @@ import app.meshpigeon.transport.RadioSession
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -293,6 +294,29 @@ class DomainUseCasesTest {
         val forged = raw.copyOf().also { it[raw.size - 3] = (it[raw.size - 3] + 1).toByte() }
         pipeline.onPacket(forged, wallClock = clockNow)
         assertEquals(1, contacts.store.value.size)
+    }
+
+    @Test
+    fun `send advert builds zero hop and flood packets for the active identity`() = runTest {
+        val identity = me()
+        val sendAdvert = SendAdvert(identities, crypto, { clockNow / 1000 })
+
+        val zeroHop = sendAdvert.build(zeroHop = true)!!
+        val zeroPacket = PacketCodec.decode(zeroHop)!!
+        assertEquals(PacketSpec.ROUTE_DIRECT, zeroPacket.routeType)
+        assertEquals(PacketSpec.PAYLOAD_ADVERT, zeroPacket.payloadType)
+        val zeroAdv = app.meshpigeon.protocol.AdvertPayload.decode(zeroPacket.payload)
+        assertArrayEquals(identity.publicKey, zeroAdv.publicKey)
+        assertEquals("mia", zeroAdv.appData.name)
+        assertTrue(crypto.verify(zeroAdv.publicKey, zeroAdv.signature, zeroAdv.publicKey,
+            app.meshpigeon.protocol.Crypto.leU32(zeroAdv.timestamp), zeroAdv.appData.encode()))
+
+        val flood = sendAdvert.build(zeroHop = false)!!
+        assertEquals(PacketSpec.ROUTE_FLOOD, PacketCodec.decode(flood)!!.routeType)
+
+        // no active identity -> nothing to build
+        identities.delete(identity.id)
+        assertNull(sendAdvert.build(zeroHop = true))
     }
 
     @Test

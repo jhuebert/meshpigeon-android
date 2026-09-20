@@ -95,6 +95,7 @@ class AppGraph(private val context: Context) {
 
     val connectToRadio = app.meshpigeon.domain.ConnectToRadio(radioTargets)
     val createIdentity = CreateIdentity(identities, channels, conversations, crypto)
+    val sendAdvert = app.meshpigeon.domain.SendAdvert(identities, crypto, { System.currentTimeMillis() / 1000 })
     val settingsGuard = app.meshpigeon.domain.RadioSettingsGuard()
     val flushOutbox = FlushOutbox(outbox, messages, ackTracker, { System.currentTimeMillis() })
 

@@ -1,6 +1,7 @@
 package app.meshpigeon.feature.messaging
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -35,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,6 +61,7 @@ import app.meshpigeon.domain.ConversationRepository
 import app.meshpigeon.domain.IdentityRepository
 import app.meshpigeon.domain.Message
 import app.meshpigeon.domain.MessageRepository
+import app.meshpigeon.domain.NotifyMode
 import app.meshpigeon.protocol.DeliveryState
 import app.meshpigeon.ui.EmptyState
 import app.meshpigeon.ui.InitialAvatar
@@ -146,6 +150,15 @@ class ChatsViewModel(
         viewModelScope.launch {
             identities.active().first()?.let { conversations.markAllRead(it.id) }
         }
+    }
+
+    fun markRead(conversation: Conversation) {
+        viewModelScope.launch { conversations.markRead(conversation.id) }
+    }
+
+    /** Per-conversation notification mode (07 §8); the row wins over the channel. */
+    fun setNotifyMode(conversation: Conversation, mode: NotifyMode) {
+        viewModelScope.launch { conversations.update(conversation.copy(notifyMode = mode)) }
     }
 }
 
@@ -253,6 +266,8 @@ fun ChatsScreen(
                         avatarKey = row.avatarKey,
                         isRequest = row.isRequest,
                         onClick = { onOpenConversation(row.conversation) },
+                        onMarkRead = { viewModel.markRead(row.conversation) },
+                        onSetNotifyMode = { viewModel.setNotifyMode(row.conversation, it) },
                     )
                 }
             }
@@ -260,6 +275,7 @@ fun ChatsScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatRow(
     conversation: Conversation,
@@ -269,11 +285,15 @@ fun ChatRow(
     avatarKey: ByteArray,
     isRequest: Boolean = false,
     onClick: () -> Unit,
+    onMarkRead: () -> Unit = {},
+    onSetNotifyMode: (NotifyMode) -> Unit = {},
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    var notifyDialog by remember { mutableStateOf(false) }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
         color = MaterialTheme.colorScheme.surface,
     ) {
         Row(
@@ -305,4 +325,67 @@ fun ChatRow(
             }
         }
     }
+
+    // long-press actions (07 §3): Mark read, Notifications…
+    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+        DropdownMenuItem(
+            text = { Text("Mark read") },
+            onClick = {
+                menuOpen = false
+                onMarkRead()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Notifications…") },
+            onClick = {
+                menuOpen = false
+                notifyDialog = true
+            },
+        )
+    }
+
+    if (notifyDialog) {
+        NotifyModeDialog(
+            current = conversation.notifyMode,
+            onSelect = {
+                notifyDialog = false
+                onSetNotifyMode(it)
+            },
+            onDismiss = { notifyDialog = false },
+        )
+    }
+}
+
+/** Default / Important only / Muted (07 §8). */
+@Composable
+private fun NotifyModeDialog(current: NotifyMode, onSelect: (NotifyMode) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Notifications") },
+        text = {
+            Column {
+                listOf(
+                    NotifyMode.DEFAULT to "Default",
+                    NotifyMode.IMPORTANT_ONLY to "Important only",
+                    NotifyMode.MUTED to "Muted",
+                ).forEach { (mode, label) ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (mode == current) "$label ✓" else label,
+                            )
+                        },
+                        onClick = { onSelect(mode) },
+                    )
+                }
+                Text(
+                    "Default: direct messages always notify; channels only when @mentioned.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = MeshPigeonSpacing.sm),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
 }

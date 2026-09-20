@@ -130,6 +130,23 @@ object Messages {
     }
 
     /**
+     * Build a zero-hop advert (07 §5 "Say hi nearby"): same ADVERT payload
+     * but routed DIRECT with an empty path — a single broadcast the mesh
+     * does not relay (MeshCore's sendZeroHop).
+     */
+    fun buildZeroHopAdvert(
+        crypto: MeshCrypto,
+        identity: IdentityKeyPair,
+        timestamp: Long,
+        appData: AdvertAppData,
+    ): ByteArray {
+        val raw = buildAdvert(crypto, identity, timestamp, appData)
+        // route type lives in header bits 0–1; keep payload type + version
+        raw[0] = ((raw[0].toInt() and 0b11111100) or PacketSpec.ROUTE_DIRECT).toByte()
+        return raw
+    }
+
+    /**
      * Convert a flood-routed packet to a direct-routed one, preserving
      * transport codes if present and setting the route's path.
      */

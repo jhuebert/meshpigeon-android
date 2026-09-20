@@ -231,7 +231,25 @@ fun MeshPigeonApp(graph: AppGraph) {
                         }
                     },
                 )
-                ContactsScreen(viewModel = vm)
+                ContactsScreen(
+                    viewModel = vm,
+                    onSayHi = {
+                        when {
+                            graph.radioSession == null -> "Connect a radio first"
+                            else -> {
+                                val packet = graph.sendAdvert.build(zeroHop = true)
+                                when {
+                                    packet == null -> "Create a profile first"
+                                    else -> runCatching { graph.radioSession!!.sendPacket(packet) }
+                                        .fold(
+                                            onSuccess = { "Hello sent — radios in range heard you" },
+                                            onFailure = { "Could not send: ${it.message}" },
+                                        )
+                                }
+                            }
+                        }
+                    },
+                )
             }
             composable(Destination.Map.route) {
                 MapPlaceholder()

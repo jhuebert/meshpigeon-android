@@ -211,6 +211,25 @@ class CryptoTest {
     }
 
     @Test
+    fun `zero hop advert is a direct-routed single broadcast`() {
+        val id = crypto.newIdentity()
+        val ts = 1_700_000_002L
+        val app = AdvertAppData(flags = AdvertAppData.FLAG_HAS_NAME, name = "Nearby")
+        val raw = Messages.buildZeroHopAdvert(crypto, id, ts, app)
+        val packet = PacketCodec.decode(raw)!!
+        // same ADVERT payload, but ROUTE_DIRECT with an empty path — receivers
+        // do not relay it (MeshCore sendZeroHop)
+        assertEquals(PacketSpec.ROUTE_DIRECT, packet.routeType)
+        assertEquals(PacketSpec.PAYLOAD_ADVERT, packet.payloadType)
+        assertEquals(0, packet.path.hopCount)
+        val adv = AdvertPayload.decode(packet.payload)
+        assertEquals("Nearby", adv.appData.name)
+        // the flood variant stays flood-routed
+        val flood = Messages.buildAdvert(crypto, id, ts, app)
+        assertEquals(PacketSpec.ROUTE_FLOOD, PacketCodec.decode(flood)!!.routeType)
+    }
+
+    @Test
     fun `direct message round trip between two identities`() {
         val alice = crypto.newIdentity()
         val bob = crypto.newIdentity()
