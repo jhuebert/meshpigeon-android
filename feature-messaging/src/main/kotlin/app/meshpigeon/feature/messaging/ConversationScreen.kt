@@ -557,6 +557,7 @@ fun MessageBubble(
     val mine = message.out
     var actionsOpen by remember { mutableStateOf(false) }
     var emojiOpen by remember { mutableStateOf(false) }
+    var detailsOpen by remember { mutableStateOf(false) }
     var cardSaved by remember { mutableStateOf(false) }
     val card = remember(message.id, message.body) { ShareCards.detect(message.body) }
     Row(
@@ -601,6 +602,13 @@ fun MessageBubble(
             androidx.compose.material3.DropdownMenuItem(
                 text = { Text("Delete locally") },
                 onClick = { actionsOpen = false },
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("Message details") },
+                onClick = {
+                    actionsOpen = false
+                    detailsOpen = true
+                },
             )
         }
         Column(
@@ -681,6 +689,10 @@ fun MessageBubble(
                 }
             }
         }
+    }
+
+    if (detailsOpen) {
+        MessageDetailSheet(message = message, onDismiss = { detailsOpen = false })
     }
 
     if (emojiOpen) {
