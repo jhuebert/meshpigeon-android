@@ -37,6 +37,20 @@ class MeshSimHarness(
     private val dupPercent: Int = 0,
     private val tickMs: Long = 10,
     private val maxPerFetch: Int = 32,
+    /**
+     * Radio range as an adjacency list (null = everyone hears everyone).
+     * Only meaningful together with [air]/`relay = false` — with relaying
+     * on, the harness itself plays repeater and reaches every radio.
+     */
+    private val adjacency: List<Set<Int>>? = null,
+    /**
+     * When true (default) the harness relays first-seen packets itself —
+     * the pre-repeater mesh model used by the fanout/loss/dedup tests.
+     * When false the harness is ONLY the RF layer: packets move between
+     * radios solely via [air] (called by the test's app-driven repeaters),
+     * which is exactly the app-repeater shape (03 §4).
+     */
+    private val relay: Boolean = true,
 ) {
     private val adapters = mutableListOf<TcpRadioAdapter>()
     val sessions = mutableListOf<RadioSession>()
@@ -83,6 +97,21 @@ class MeshSimHarness(
     /** Originate a packet on radio [from] (the sent entry relays from there). */
     suspend fun send(from: Int, raw: ByteArray): Long = sessions[from].sendPacket(raw)
 
+    /**
+     * Model one on-air transmission by radio [from]: its neighbors hear it
+     * per the RF loss/dup model (queued — sims key up serially). Used by
+     * app-driven-repeater tests, where propagation is the repeater's
+     * decision, not the harness's.
+     */
+    fun air(from: Int, raw: ByteArray) {
+        val neighbors = adjacency?.getOrNull(from) ?: (sessions.indices - from)
+        for (j in neighbors) {
+            if (random.nextInt(100) < lossPercent) continue
+            relayQueues[j] += raw
+            if (random.nextInt(100) < dupPercent) relayQueues[j] += raw
+        }
+    }
+
     /** Everything still retained in radio [i]'s store. */
     suspend fun storeEntries(i: Int): List<app.meshpigeon.transport.PacketEntry> {
         val out = mutableListOf<app.meshpigeon.transport.PacketEntry>()
@@ -105,7 +134,9 @@ class MeshSimHarness(
             }
         }
 
-        // fetch phase: pull new store entries and arm relays
+        // fetch phase: pull new store entries and arm relays (harness-as-
+        // repeater mode only — with relay=false propagation is the app's job)
+        if (!relay) return
         for (i in sessions.indices) {
             var maxSeq = cursors[i]
             sessions[i].fetchPackets(cursors[i], maxPerFetch) { entry ->

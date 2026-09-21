@@ -243,7 +243,10 @@ fun MeshPigeonApp(graph: AppGraph) {
                                 val packet = graph.sendAdvert.build(zeroHop = true)
                                 when {
                                     packet == null -> "Create a profile first"
-                                    else -> runCatching { graph.radioSession!!.sendPacket(packet) }
+                                    else -> runCatching {
+                                        graph.repeater.observeOutgoing(packet) // TX echo must not repeat
+                                        graph.radioSession!!.sendPacket(packet)
+                                    }
                                         .fold(
                                             onSuccess = { "Hello sent — radios in range heard you" },
                                             onFailure = { "Could not send: ${it.message}" },

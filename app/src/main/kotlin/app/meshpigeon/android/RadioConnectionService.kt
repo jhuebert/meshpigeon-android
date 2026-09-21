@@ -97,6 +97,9 @@ class RadioConnectionService : Service() {
 
         try {
             val session = graph.newRadioSession(adapter)
+            // the repeater's outgoing path is the current session; errors are
+            // handled inside onPacket's runCatching
+            graph.repeater.transmit = { raw -> session.sendPacket(raw) }
             val info = session.getInfo()
             anchorUptime(session)
             graph.connection.value = AppGraph.ConnectionState(
@@ -144,6 +147,7 @@ class RadioConnectionService : Service() {
             }
             // outbox: per-conversation FIFO + tracker-driven retries (11 §2.2)
             for (tx in graph.flushOutbox.tick()) {
+                graph.repeater.observeOutgoing(tx.entry.packet) // never repeat our own TX
                 runCatching { session.sendPacket(tx.entry.packet) }
             }
         }
@@ -161,10 +165,17 @@ class RadioConnectionService : Service() {
                 snr = entry.snr,
                 radioUptimeMs = entry.uptimeMs,
             )
+            // the in-app repeater judges the packet after the pipeline —
+            // flood traffic we merely heard is re-sent verbatim (03 §4);
+            // send failures (BUSY, TX failed) are swallowed — repeat mode
+            // is best-effort, never a retry queue
+            runCatching { graph.repeater.onPacket(entry.raw) }
             // ACK every received DM (fast path, 06 §4)
             var ack = graph.receivePipeline.pendingAcks.removeFirstOrNull()
             while (ack != null) {
-                runCatching { session.sendPacket(Messages.buildAck(ack)) }
+                val ackPacket = Messages.buildAck(ack)
+                graph.repeater.observeOutgoing(ackPacket)
+                runCatching { session.sendPacket(ackPacket) }
                 ack = graph.receivePipeline.pendingAcks.removeFirstOrNull()
             }
             // an ACK for one of our outgoing messages confirms it

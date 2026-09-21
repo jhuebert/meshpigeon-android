@@ -15,6 +15,7 @@ import app.meshpigeon.data.RoomRadioTargetRepository
 import app.meshpigeon.domain.InMemoryPathCache
 import app.meshpigeon.domain.CreateIdentity
 import app.meshpigeon.domain.FlushOutbox
+import app.meshpigeon.domain.PacketRepeater
 import app.meshpigeon.domain.ReceivePipeline
 import app.meshpigeon.domain.SendMessage
 import app.meshpigeon.domain.SyncRadioHistory
@@ -31,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 
 /**
  * Manual dependency graph (M0). Hilt lands when the feature surface grows
@@ -83,6 +85,19 @@ class AppGraph(private val context: Context) {
     )
 
     val syncRadioHistory = SyncRadioHistory(identities, tagCache, receivePipeline)
+
+    /**
+     * In-app repeater (03 §4): while a radio is connected, every eligible
+     * flood packet we hear is re-sent verbatim (dedup by tag). On by
+     * default — MeshPigeon phones ARE the mesh's repeaters; direct-routed
+     * traffic and packets addressed to us are never repeated.
+     */
+    val repeater = PacketRepeater(
+        crypto,
+        myHash = {
+            identities.active().first()?.publicKey?.getOrNull(0)?.toInt()?.and(0xFF)
+        },
+    )
 
     val sendMessage = SendMessage(
         identities, contacts, conversations, messages, outbox, channels,
